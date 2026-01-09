@@ -4,6 +4,8 @@ import argparse
 from pathlib import Path
 from rotor_owl.ontology_stats import compute_stats
 from rotor_owl.owl_loader import load_owl
+from rotor_owl.feature_extract import extract_features
+import csv
 
 
 def _cmd_load(args: argparse.Namespace) -> int:
@@ -32,6 +34,45 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_features(args: argparse.Namespace) -> int:
+    ont = load_owl(args.path)
+    recs = extract_features(ont, assembly_iri=args.assembly_iri)
+
+    print(f"Features found: {len(recs)}")
+    for r in recs[: args.limit]:
+        print(f"- {r.feature_name} | value={r.value} {r.unit} | type={r.ftype}")
+
+    if args.out is not None:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        with args.out.open("w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(
+                [
+                    "feature_name",
+                    "value",
+                    "unit",
+                    "type",
+                    "feature_iri",
+                    "feature_class_iri",
+                    "comment",
+                ]
+            )
+            for r in recs:
+                w.writerow(
+                    [
+                        r.feature_name,
+                        r.value,
+                        r.unit,
+                        r.ftype,
+                        r.feature_iri,
+                        r.feature_class_iri,
+                        r.comment,
+                    ]
+                )
+        print(f"Wrote features to {args.out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rotor_owl", description="Rotor OWL tools")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -45,6 +86,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_stats.add_argument("path", type=Path, help="Path to .owl file")
     p_stats.add_argument("--top-prefixes", type=int, default=10, help="Top IRI prefixes to show")
     p_stats.set_defaults(func=lambda a: _cmd_stats(a))
+    p_feat = sub.add_parser(
+        "features", help="Extract IMS parameter-features (hasValue/hasUnit/hasType)"
+    )
+    p_feat.add_argument("path", type=Path, help="Path to .owl file")
+    p_feat.add_argument(
+        "--assembly-iri",
+        type=str,
+        default=None,
+        help="Limit to one assembly individual by full IRI",
+    )
+    p_feat.add_argument("--limit", type=int, default=20, help="Max features to print")
+    p_feat.set_defaults(func=_cmd_features)
+    p_feat.add_argument("--out", type=Path, default=None, help="Write extracted features to CSV")
+
     return parser
 
 
