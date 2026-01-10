@@ -1,0 +1,9 @@
+ParamType_ID,Label,Definition,Examples
+GEOM,Geometrie,"Ma?e, Formen, Passungen, Positionen","L?nge, ?, Sitzl?nge, Nutform"
+STRUCT,Festigkeit/Struktur,"Tragf?higkeit, Spannungen, zul. Drehzahl","Grenzdrehzahl, Festigkeit"
+DYN,Dynamik,"Rotordynamik, Unwucht, Tr?gheit","Tr?gheitsmoment, Schwingg?te"
+MFG,Fertigung/Prozess,"Stanzkonzept, Normen, Prozesswahl","API541, Isolierklasse"
+MTRL,Material,Materialwahl/-eigenschaften,"Alu, Cu, Stahlsorte"
+ELEC,Elektrisch,Elektrische Parameter/Vorgaben,Isolierung nach Berechnung
+COST,Kosten,Wirtschaftliche Kennzahlen,St?ckkosten
+REQ,Anforderung,Kundenschnittstellen/Normen,"Wellenende, Norm"

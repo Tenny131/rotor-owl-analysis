@@ -1,0 +1,19 @@
+Column1,Column2,Column3,Column4,Column5,Column6,Column7
+Quelle,Relation,Ziel,Typ,Staerke,Abh?ngigkeit_%,Notiz
+Welle.Wellenabsatz(Paketsitz),Beeinflusst,Innenl?fter.Position,GEOM,mittel,60%,
+Innenl?fter.Innendurchmesser,Beeinflusst,"Welle.Segment(L?nge,Position,?)",GEOM,hoch,100%,
+Aktivteil.Abma?e,Beeinflusst,Welle.Segment/Position,GEOM,hoch,30%,
+Welle.Geometrie,Beeinflusst,Blechpaket.Geometrie,GEOM,-,,"gibt es nicht in die Richtung, nur andersherum siehe vorherige Zeile"
+Lagersitz.Welle (Besser Wellenende - W?lzlager),constrains,Lager.Auswahl,GEOM,hoch,70%,Moment definiert Lager mindest sitz basierend auf Wellenendedimension bei W?lzlagern
+Blechpaket,affectsStrength,Stanzkonzept,MFG,hoch,75%,Relation unklar?
+K?figwicklung,affectsStrength,K-Ring,STRUCT,mittel,90%,
+L?fter(auf Welle),constrains,MaxDrehzahl,STRUCT/DYN,hoch,90%,
+Aktivteil,Beeinflusst,Maschinenparameter(*),SYS,,,*?
+Welle,Beeinflusst,Lager; Rotordynamik,DYN,hoch,100%,
+Lagerstellen,Beeinflusst,Lageroptionen; Kosten,COST,mittel,70%,
+Tarierscheiben,Beeinflusst,Welle,GEOM,hoch,80%,
+Wuchtscheiben,Beeinflusst,Welle,GEOM,,,siehe Zeile dr?ber
+Blechpaket,Beeinflusst,Welle,GEOM,hoch,80%,
+Wellenenden,Anfordert,Kundenanforderung,REQ,niedrig,80%,
+"Rotor.(D_Au?en, Aktivteil_L, Drehzahl)",co-tuned,AlleBauteile,SYS,hoch,20%,
+"Motor.(Leistung,Drehzahl)",requiresRe-design,L?ufer-Bauteile(alle),SYS,hoch,30%,

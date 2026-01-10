@@ -1,0 +1,7 @@
+Component_ID,Label,Type,Description
+C_WELLE,Welle,Component,Rotationswelle des L?ufers
+C_AKTIVTEIL,Aktivteil,Component,Blechpaket + K?fig (Rotorpaket)
+C_LUEFTER,L?fter,Component,Innen-/Au?enl?fter bzw. Wellenl?fter
+C_BLECHPAKET,Blechpaket,Component,Elektroblechpaket des L?ufers
+C_WUCHTSCHEIBEN,Wuchtscheiben,Component,Tarierscheiben f?r Auswuchtung
+C_Wellenende,Wellenende,Component Feature,Wellenende (Schnittstelle zum Kunden)

@@ -5,6 +5,7 @@ from pathlib import Path
 from rotor_owl.ontology_stats import compute_stats
 from rotor_owl.owl_loader import load_owl
 from rotor_owl.feature_extract import extract_features
+from rotor_owl.dataset_generate import generate_instances
 import csv
 
 
@@ -73,6 +74,18 @@ def _cmd_features(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_generate(args):
+    out = generate_instances(
+        parameters_csv=args.parameters_csv,
+        out_dir=args.out,
+        n=args.n,
+        seed=args.seed,
+        missing_rate=args.missing_rate,
+    )
+    print(f"Wrote dataset: {out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rotor_owl", description="Rotor OWL tools")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -99,6 +112,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_feat.add_argument("--limit", type=int, default=20, help="Max features to print")
     p_feat.set_defaults(func=_cmd_features)
     p_feat.add_argument("--out", type=Path, default=None, help="Write extracted features to CSV")
+    p_gen = sub.add_parser("generate", help="Generate synthetic instance dataset (CSV)")
+    p_gen.add_argument("--n", type=int, default=50, help="Number of designs")
+    p_gen.add_argument("--seed", type=int, default=42, help="Random seed")
+    p_gen.add_argument("--out", type=Path, default=Path("data/generated"), help="Output directory")
+    p_gen.add_argument(
+        "--parameters-csv",
+        type=Path,
+        default=Path("data/reference/parameters.csv"),
+        help="Reference parameters CSV",
+    )
+    p_gen.add_argument("--missing-rate", type=float, default=0.05, help="Missing value probability")
+    p_gen.set_defaults(func=_cmd_generate)
 
     return parser
 

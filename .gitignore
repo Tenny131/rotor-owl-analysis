@@ -184,8 +184,11 @@ cython_debug/
 .cursorindexingignore
 
 # VS Code
-.vscode/
+.vscode/    
 
 # OS
 .DS_Store
 Thumbs.db
+
+# generated datasets (do not commit)
+data/generated/
