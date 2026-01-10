@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 from rotor_owl.ontology_stats import compute_stats
 from rotor_owl.owl_loader import load_owl
 from rotor_owl.feature_extract import extract_features
 from rotor_owl.dataset_generate import generate_instances
-import csv
+from rotor_owl.similarity import top_k_jaccard
 
 
 def _cmd_load(args: argparse.Namespace) -> int:
@@ -86,6 +87,23 @@ def _cmd_generate(args):
     return 0
 
 
+def _cmd_similarity(args):
+    weights = _parse_weights(args.weights)
+    results = top_k_jaccard(
+        instances_csv=args.instances,
+        query_design=args.design,
+        k=args.k,
+        paramtype_weights=(weights if weights else None),
+    )
+    if weights:
+        print(f"Using ParamType weights: {weights}")
+    print(f"TOP {len(results)} Similar Designs for {args.design}")
+    for rank, (other, score) in enumerate(results, start=1):
+        print(f"{rank:>2}. {other}  similarity={score:.4f}")
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rotor_owl", description="Rotor OWL tools")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -124,8 +142,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_gen.add_argument("--missing-rate", type=float, default=0.05, help="Missing value probability")
     p_gen.set_defaults(func=_cmd_generate)
+    p_sim = sub.add_parser("similarity", help="TOP-k Jaccard similarity for a design")
+    p_sim.add_argument("instances", type=Path, help="instances.csv")
+    p_sim.add_argument("design", help="Query Design_ID (e.g. D001)")
+    p_sim.add_argument("--k", type=int, default=5, help="Number of similar designs")
+    p_sim.set_defaults(func=_cmd_similarity)
+    p_sim.add_argument(
+        "--weights",
+        default="",
+        help='ParamType weights, e.g. "GEOM=1,REQ=0.3,DYN=1.2" (default: all 1.0)',
+    )
 
     return parser
+
+
+def _parse_weights(s: str) -> dict[str, float]:
+    s = (s or "").strip()
+    if not s:
+        return {}
+
+    out: dict[str, float] = {}
+    parts = [p.strip() for p in s.split(",") if p.strip()]
+    for p in parts:
+        if "=" not in p:
+            raise ValueError(f"Invalid weight token: {p} (expected KEY=VALUE)")
+        k, v = p.split("=", 1)
+        out[k.strip()] = float(v.strip())
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
