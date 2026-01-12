@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from rotor_owl.owl_loader import load_owl
+from rotor_owl.ontology_stats import load_owl
 
 
 def test_load_owl_loads_local_example():
