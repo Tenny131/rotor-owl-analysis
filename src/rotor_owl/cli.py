@@ -3,13 +3,115 @@ from __future__ import annotations
 import argparse
 import csv
 from pathlib import Path
-from rotor_owl.ontology_stats import compute_stats
-from rotor_owl.owl_loader import load_owl
-from rotor_owl.feature_extract import extract_features
 from rotor_owl.dataset_generate import generate_instances
-from rotor_owl.similarity import top_k_jaccard
+from rotor_owl.similarity import top_k_jaccard, top_k_numeric_similarity
+from rotor_owl.ontology_stats import (
+    load_owl,
+    inspect_ontology,
+    compute_stats,
+    extract_features,
+    extract_dependency_graph,
+)
 
 
+# CLI SETUP
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+def _parse_weights(s: str) -> dict[str, float]:
+    s = (s or "").strip()
+    if not s:
+        return {}
+
+    out: dict[str, float] = {}
+    parts = [p.strip() for p in s.split(",") if p.strip()]
+    for p in parts:
+        if "=" not in p:
+            raise ValueError(f"Invalid weight token: {p} (expected KEY=VALUE)")
+        k, v = p.split("=", 1)
+        out[k.strip()] = float(v.strip())
+    return out
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="rotor_owl", description="Rotor OWL tools")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_load = sub.add_parser("load", help="Load an OWL file and show basic info")
+    p_load.add_argument("path", type=Path, help="Path to .owl file")
+    p_load.add_argument("--list-classes", action="store_true", help="Print classes")
+    p_load.add_argument("--limit", type=int, default=20, help="Max classes to print")
+    p_load.set_defaults(func=_cmd_load)
+    p_stats = sub.add_parser("stats", help="Show ontology statistics")
+    p_stats.add_argument("path", type=Path, help="Path to .owl file")
+    p_stats.add_argument("--top-prefixes", type=int, default=10, help="Top IRI prefixes to show")
+    p_stats.set_defaults(func=lambda a: _cmd_stats(a))
+    p_feat = sub.add_parser(
+        "features", help="Extract IMS parameter-features (hasValue/hasUnit/hasType)"
+    )
+    p_feat.add_argument("path", type=Path, help="Path to .owl file")
+    p_feat.add_argument(
+        "--assembly-iri",
+        type=str,
+        default=None,
+        help="Limit to one assembly individual by full IRI",
+    )
+    p_feat.add_argument("--limit", type=int, default=20, help="Max features to print")
+    p_feat.set_defaults(func=_cmd_features)
+    p_feat.add_argument("--out", type=Path, default=None, help="Write extracted features to CSV")
+    p_gen = sub.add_parser("generate", help="Generate synthetic instance dataset (CSV)")
+    p_gen.add_argument("--n", type=int, default=50, help="Number of designs")
+    p_gen.add_argument("--seed", type=int, default=42, help="Random seed")
+    p_gen.add_argument("--out", type=Path, default=Path("data/generated"), help="Output directory")
+    p_gen.add_argument(
+        "--parameters-csv",
+        type=Path,
+        default=Path("data/reference/parameters.csv"),
+        help="Reference parameters CSV",
+    )
+    p_gen.add_argument("--missing-rate", type=float, default=0.05, help="Missing value probability")
+    p_gen.set_defaults(func=_cmd_generate)
+    p_sim = sub.add_parser("similarity", help="TOP-k Jaccard similarity for a design")
+    p_sim.add_argument("instances", type=Path, help="instances.csv")
+    p_sim.add_argument("design", help="Query Design_ID (e.g. D001)")
+    p_sim.add_argument("--k", type=int, default=5, help="Number of similar designs")
+    p_sim.set_defaults(func=_cmd_similarity)
+    p_sim.add_argument(
+        "--weights",
+        default="",
+        help='ParamType weights, e.g. "GEOM=1,REQ=0.3,DYN=1.2" (default: all 1.0)',
+    )
+    p_insp = sub.add_parser("inspect", help="Inspect OWL: most used relations & data properties")
+    p_insp.add_argument("owl", help="Path to OWL file (e.g. example.owl)")
+    p_insp.add_argument("--top", type=int, default=30, help="How many items to show")
+    p_insp.set_defaults(func=_cmd_inspect)
+    p_deps = sub.add_parser(
+        "deps", help="Extract dependency relations (object properties) as a graph"
+    )
+    p_deps.add_argument("owl", help="Path to OWL file")
+    p_deps.add_argument(
+        "--prefix",
+        default="ims.",
+        help='Only include properties starting with this prefix (default: "ims.")',
+    )
+    p_deps.add_argument("--top", type=int, default=30, help="How many relations to show")
+    p_deps.set_defaults(func=_cmd_deps)
+    p_simnum = sub.add_parser(
+        "similarity-numeric",
+        help="TOP-k Similarity basierend nur auf numerischen Parameterwerten",
+    )
+    p_simnum.add_argument("instances", type=Path, help="instances.csv")
+    p_simnum.add_argument("design", help="Query Design_ID (z. B. D001)")
+    p_simnum.add_argument("--k", type=int, default=5, help="Anzahl ähnlicher Designs")
+    p_simnum.set_defaults(func=_cmd_similarity_numeric)
+
+    return parser
+
+
+# CLI COMMANDS
 def _cmd_load(args: argparse.Namespace) -> int:
     ont = load_owl(args.path)
     classes = list(ont.classes())
@@ -104,74 +206,53 @@ def _cmd_similarity(args):
     return 0
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="rotor_owl", description="Rotor OWL tools")
-    sub = parser.add_subparsers(dest="command", required=True)
+def _cmd_inspect(args):
+    inv = inspect_ontology(args.owl)
 
-    p_load = sub.add_parser("load", help="Load an OWL file and show basic info")
-    p_load.add_argument("path", type=Path, help="Path to .owl file")
-    p_load.add_argument("--list-classes", action="store_true", help="Print classes")
-    p_load.add_argument("--limit", type=int, default=20, help="Max classes to print")
-    p_load.set_defaults(func=_cmd_load)
-    p_stats = sub.add_parser("stats", help="Show ontology statistics")
-    p_stats.add_argument("path", type=Path, help="Path to .owl file")
-    p_stats.add_argument("--top-prefixes", type=int, default=10, help="Top IRI prefixes to show")
-    p_stats.set_defaults(func=lambda a: _cmd_stats(a))
-    p_feat = sub.add_parser(
-        "features", help="Extract IMS parameter-features (hasValue/hasUnit/hasType)"
-    )
-    p_feat.add_argument("path", type=Path, help="Path to .owl file")
-    p_feat.add_argument(
-        "--assembly-iri",
-        type=str,
-        default=None,
-        help="Limit to one assembly individual by full IRI",
-    )
-    p_feat.add_argument("--limit", type=int, default=20, help="Max features to print")
-    p_feat.set_defaults(func=_cmd_features)
-    p_feat.add_argument("--out", type=Path, default=None, help="Write extracted features to CSV")
-    p_gen = sub.add_parser("generate", help="Generate synthetic instance dataset (CSV)")
-    p_gen.add_argument("--n", type=int, default=50, help="Number of designs")
-    p_gen.add_argument("--seed", type=int, default=42, help="Random seed")
-    p_gen.add_argument("--out", type=Path, default=Path("data/generated"), help="Output directory")
-    p_gen.add_argument(
-        "--parameters-csv",
-        type=Path,
-        default=Path("data/reference/parameters.csv"),
-        help="Reference parameters CSV",
-    )
-    p_gen.add_argument("--missing-rate", type=float, default=0.05, help="Missing value probability")
-    p_gen.set_defaults(func=_cmd_generate)
-    p_sim = sub.add_parser("similarity", help="TOP-k Jaccard similarity for a design")
-    p_sim.add_argument("instances", type=Path, help="instances.csv")
-    p_sim.add_argument("design", help="Query Design_ID (e.g. D001)")
-    p_sim.add_argument("--k", type=int, default=5, help="Number of similar designs")
-    p_sim.set_defaults(func=_cmd_similarity)
-    p_sim.add_argument(
-        "--weights",
-        default="",
-        help='ParamType weights, e.g. "GEOM=1,REQ=0.3,DYN=1.2" (default: all 1.0)',
+    print(f"Loaded ontology: {args.owl}")
+    print(f"Classes: {len(inv.classes)}")
+    print(f"Defined object properties: {len(inv.object_props_defined)}")
+    print(f"Defined data properties:   {len(inv.data_props_defined)}")
+    print(f"Defined annotation props:  {len(inv.annotation_props_defined)}")
+
+    print("\nObject properties (defined):")
+    for name in inv.object_props_defined[: args.top]:
+        print(f"- {name}")
+
+    print("\nData properties (defined):")
+    for name in inv.data_props_defined[: args.top]:
+        print(f"- {name}")
+
+    print("\nAnnotation properties (defined):")
+    for name in inv.annotation_props_defined[: args.top]:
+        print(f"- {name}")
+
+    return 0
+
+
+def _cmd_deps(args):
+    g = extract_dependency_graph(args.owl, include_prefix=args.prefix)
+
+    print(f"Loaded ontology: {args.owl}")
+    print(f"Dependency graph nodes: {len(g.edges)}")
+    print(f"Dependency graph edges: {sum(len(v) for v in g.edges.values())}")
+
+    print("\nTop relations (by asserted edges):")
+    for rel, n in g.rel_counts.most_common(args.top):
+        print(f"{n:>6}  {rel}")
+
+    return 0
+
+
+def _cmd_similarity_numeric(args):
+    results = top_k_numeric_similarity(
+        instances_csv=args.instances,
+        query_design=args.design,
+        k=args.k,
     )
 
-    return parser
+    print(f"TOP {len(results)} numerisch ähnliche Designs für {args.design}")
+    for rank, (other, score) in enumerate(results, start=1):
+        print(f"{rank:>2}. {other}  similarity={score:.4f}")
 
-
-def _parse_weights(s: str) -> dict[str, float]:
-    s = (s or "").strip()
-    if not s:
-        return {}
-
-    out: dict[str, float] = {}
-    parts = [p.strip() for p in s.split(",") if p.strip()]
-    for p in parts:
-        if "=" not in p:
-            raise ValueError(f"Invalid weight token: {p} (expected KEY=VALUE)")
-        k, v = p.split("=", 1)
-        out[k.strip()] = float(v.strip())
-    return out
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    return args.func(args)
+    return 0

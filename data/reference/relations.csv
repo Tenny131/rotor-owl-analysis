@@ -1,4 +1,3 @@
-Column1,Column2,Column3,Column4,Column5,Column6,Column7
 Quelle,Relation,Ziel,Typ,Staerke,Abh?ngigkeit_%,Notiz
 Welle.Wellenabsatz(Paketsitz),Beeinflusst,Innenl?fter.Position,GEOM,mittel,60%,
 Innenl?fter.Innendurchmesser,Beeinflusst,"Welle.Segment(L?nge,Position,?)",GEOM,hoch,100%,

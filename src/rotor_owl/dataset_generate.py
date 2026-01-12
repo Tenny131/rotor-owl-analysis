@@ -13,7 +13,7 @@ class ParameterSpec:
     paramtype_id: str
     datatype: str
     unit: str
-    enum_domain: str  # "{A, B, C}" oder leer
+    enum_domain: str  # string vom csv, z.B. "{val1, val2, val3}"
 
 
 def _read_parameters_csv(path: Path) -> list[ParameterSpec]:
@@ -84,8 +84,6 @@ def generate_instances(
     out_dir.mkdir(parents=True, exist_ok=True)
     specs = _read_parameters_csv(parameters_csv)
 
-    rng = random.Random(seed)
-
     out_path = out_dir / "instances.csv"
     with out_path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
@@ -105,21 +103,25 @@ def generate_instances(
         for i in range(1, n + 1):
             design_id = f"D{i:03d}"
 
+            rng_d = random.Random(
+                seed + i
+            )  # pro Design eigener RNG (seed-abhängig, aber verschieden)
+
             for spec in specs:
-                is_missing = 1 if rng.random() < missing_rate else 0
+                is_missing = 1 if rng_d.random() < missing_rate else 0
                 value: str = ""
 
                 if not is_missing:
                     dt = spec.datatype.lower()
                     if dt == "numeric":
-                        value = str(_sample_numeric(rng, spec.unit, spec.parameter_id))
+                        value = str(_sample_numeric(rng_d, spec.unit, spec.parameter_id))
                     elif dt == "boolean":
-                        value = rng.choice(["ja", "nein"])
+                        value = rng_d.choice(["ja", "nein"])
                     elif dt == "enum":
                         choices = _parse_enum_domain(spec.enum_domain)
-                        value = rng.choice(choices) if choices else "UNSPECIFIED"
+                        value = rng_d.choice(choices) if choices else "UNSPECIFIED"
                     elif dt == "text":
-                        value = rng.choice(["k6/H7", "h6/H7", "m6/H7", "g6/H7"])
+                        value = rng_d.choice(["k6/H7", "h6/H7", "m6/H7", "g6/H7"])
                     else:
                         value = "UNSPECIFIED"
 
