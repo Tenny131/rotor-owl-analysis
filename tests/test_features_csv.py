@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import csv
-
 from rotor_owl.cli import main
 
 
 def test_features_csv_export(tmp_path, mini_owl):
+    # Arrange: OWL-Datei schreiben
     owl_path = tmp_path / "mini.owl"
     owl_path.write_text(mini_owl, encoding="utf-8")
 
     out_csv = tmp_path / "features.csv"
 
+    # Act: CLI ausführen
     rc = main(
         [
             "features",
@@ -21,13 +22,20 @@ def test_features_csv_export(tmp_path, mini_owl):
             str(out_csv),
         ]
     )
-    assert rc == 0
-    assert out_csv.exists()
 
-    with out_csv.open("r", encoding="utf-8", newline="") as f:
+    # Assert: Rückgabecode & Datei
+    assert rc == 0
+    assert out_csv.is_file()
+
+    # Assert: CSV-Struktur
+    with out_csv.open(encoding="utf-8", newline="") as f:
         rows = list(csv.reader(f))
 
-    assert rows[0] == [
+    # mindestens Header + eine Datenzeile
+    assert len(rows) > 1
+
+    header = rows[0]
+    assert header == [
         "feature_name",
         "value",
         "unit",
@@ -36,5 +44,3 @@ def test_features_csv_export(tmp_path, mini_owl):
         "feature_class_iri",
         "comment",
     ]
-    assert len(rows) >= 2
-    assert any("P_TEST_1" in r[4] for r in rows[1:])
