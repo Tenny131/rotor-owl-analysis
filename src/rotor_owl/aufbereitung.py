@@ -32,23 +32,30 @@ def strip_last_suffix(name: str) -> str:
 
 def normalize_param_name(parameter_name: str) -> str:
     """
-    Normalisiert Parameter-IDs aus BEIDEN Namensschemata:
+    Normalisiert Parameter-Namen auf ihre semantische Basis.
 
-    1) Generierte Designs:
-        P_WELLE_TIR_D001  -> P_WELLE_TIR
+    Regeln (in dieser Reihenfolge):
+    1) Entferne Instanz-Suffixe wie:
+       - _D001
+       - _YYYY-MM-DD_1
+    2) Fallback:
+       - Entferne IMMER das letzte _SEGMENT
 
-    2) Original Ontologie:
-        P_WELLE_TIR_2025-11-30_1  -> P_WELLE_TIR
-
-    3) Fallback:
-        Entfernt den letzten '_SUFFIX'
-
-    4) Diese Funktion kann entfernt werden, wenn Rotor_1 aus der Ontologie verschwindet.
+    Beispiele:
+      P_WELLE_TIR_D001           -> P_WELLE_TIR
+      P_WELLE_TIR_2025-11-30_1   -> P_WELLE_TIR
+      P_AKTIV_LAENGE_XYZ         -> P_AKTIV_LAENGE
+      P_LUEFTER_D                -> P_LUEFTER
     """
-    parameter_name = re.sub(r"_D\d+$", "", parameter_name)  # entfernt _D001
-    parameter_name = re.sub(
-        r"_\d{4}-\d{2}-\d{2}_\d+$", "", parameter_name
-    )  # entfernt _YYYY-MM-DD_1
+
+    # 1) Explizite bekannte Suffixe entfernen
+    parameter_name = re.sub(r"_D\d+$", "", parameter_name)
+    parameter_name = re.sub(r"_\d{4}-\d{2}-\d{2}_\d+$", "", parameter_name)
+
+    # 2) Fallback: letztes _Segment entfernen
+    if "_" in parameter_name:
+        parameter_name = parameter_name.rsplit("_", 1)[0]
+
     return parameter_name
 
 
