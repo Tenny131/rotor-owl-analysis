@@ -15,11 +15,14 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 
 RUN pip install --no-cache-dir -U pip \
+ && pip install --no-cache-dir streamlit \
  && pip install --no-cache-dir .
+
 
 # Daten (Ontologien) separat
 COPY data ./data
 
 EXPOSE 8501
 
-CMD ["streamlit", "run", "src/rotor_owl/streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+CMD ["python", "-m", "streamlit", "run", "src/rotor_owl/streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+
