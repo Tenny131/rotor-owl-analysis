@@ -35,6 +35,10 @@ rotor-owl deps example.owl --top 10
 
 ```bash
 rotor-owl similarity-numeric data/generated/instances.csv D001 --k 5
+
+python src/rotor_owl/topk_similarity_fuseki.py --query Rotor_D001 --k 5 --weights "GEOM=2,MTRL=1,STRUCT=1,DYN=0.5,REQ=0.2,MFG=0.2,ELEC=0.2,UNKNOWN=0"
+
+streamlit run src/rotor_owl/app_similarity_ui.py
 ```
 
 ---
