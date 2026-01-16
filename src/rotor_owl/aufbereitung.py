@@ -49,7 +49,6 @@ def normalize_param_name(parameter_name: str) -> str:
     parameter_name = re.sub(
         r"_\d{4}-\d{2}-\d{2}_\d+$", "", parameter_name
     )  # entfernt _YYYY-MM-DD_1
-    parameter_name = re.sub(r"_[^_]+$", "", parameter_name)  # fallback: entfernt letztes _...
     return parameter_name
 
 
