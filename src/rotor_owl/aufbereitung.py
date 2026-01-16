@@ -47,14 +47,19 @@ def normalize_param_name(parameter_name: str) -> str:
       P_AKTIV_LAENGE_XYZ         -> P_AKTIV_LAENGE
       P_LUEFTER_D                -> P_LUEFTER
     """
+    original_name = parameter_name
 
     # 1) Explizite bekannte Suffixe entfernen
     parameter_name = re.sub(r"_D\d+$", "", parameter_name)
     parameter_name = re.sub(r"_\d{4}-\d{2}-\d{2}_\d+$", "", parameter_name)
 
-    # 2) Fallback: letztes _Segment entfernen
+    # Wenn sich der Name geändert hat → fertig
+    if parameter_name != original_name:
+        return parameter_name
+
+    # 2) Fallback: letztes Segment entfernen
     if "_" in parameter_name:
-        parameter_name = parameter_name.rsplit("_", 1)[0]
+        return parameter_name.rsplit("_", 1)[0]
 
     return parameter_name
 
