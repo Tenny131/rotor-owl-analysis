@@ -1,0 +1,28 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      # Beispiel: deine App liest diese ENV und baut daraus den Endpoint
+      - SPARQL_ENDPOINT_URL=http://fuseki:3030/rotors/sparql
+      - ONTOLOGY_PATH=/app/data/example.owl
+    volumes:
+      - ./data:/app/data:ro
+    depends_on:
+      - fuseki
+
+  fuseki:
+    image: stain/jena-fuseki:latest
+    ports:
+      - "3030:3030"
+    environment:
+      # Fuseki Admin Passwort (für UI/Upload). Für local dev ok.
+      - ADMIN_PASSWORD=admin
+      # Dataset Name "rotors"
+      - FUSEKI_DATASET_1=rotors
+    volumes:
+      - fuseki-data:/fuseki
+
+volumes:
+  fuseki-data:
