@@ -11,6 +11,11 @@ services:
       - fuseki-data:/fuseki
 
   app:
+    build:
+      context: .
+      args:
+        REPO_URL: "https://github.com/Tenny131/rotor-owl-analysis.git"
+        REPO_REF: "main"
     image: rotor-owl-app:latest
     container_name: rotor-streamlit
     ports:
