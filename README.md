@@ -1,5 +1,144 @@
 # rotor-owl-analysis
 
+# Start mit Docker (ohne Git Clone)
+
+Dieses Projekt kann **direkt aus GitHub** mit Docker Compose gestartet werden – **ohne** dass das Repository vorher lokal geklont (`git clone`) werden muss.
+
+Es werden folgende Services gestartet:
+- **Streamlit UI**: http://localhost:8501
+- **Fuseki (SPARQL)**: http://localhost:3030
+
+---
+
+## Voraussetzungen
+
+- Docker installiert
+- Docker Compose v2 verfügbar (`docker compose ...`)
+- Internetzugang (Compose-Datei wird von GitHub geladen)
+
+---
+
+## Schnellstart (ohne Clone)
+
+### Windows (PowerShell)
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/Tenny131/rotor-owl-analysis/main/docker-compose.yml | docker compose -f - up --build
+```
+
+### Linux / macOS (Terminal)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Tenny131/rotor-owl-analysis/main/docker-compose.yml | docker compose -f - up --build
+```
+
+---
+
+## Im Hintergrund starten (Detached Mode)
+
+### Windows (PowerShell)
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/Tenny131/rotor-owl-analysis/main/docker-compose.yml | docker compose -f - up -d --build
+```
+
+### Linux / macOS (Terminal)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Tenny131/rotor-owl-analysis/main/docker-compose.yml | docker compose -f - up -d --build
+```
+
+---
+
+## Container stoppen / starten / neustarten
+
+> Diese Befehle verwenden die Container-Namen aus der Compose-Konfiguration.
+
+### Stoppen (Container bleiben erhalten)
+
+```bash
+docker stop rotor-streamlit rotor-fuseki
+```
+
+### Wieder starten
+
+```bash
+docker start rotor-streamlit rotor-fuseki
+```
+
+### Neustarten
+
+```bash
+docker restart rotor-streamlit rotor-fuseki
+```
+
+---
+
+## Logs anzeigen
+
+### Streamlit
+
+```bash
+docker logs -f rotor-streamlit
+```
+
+### Fuseki
+
+```bash
+docker logs -f rotor-fuseki
+```
+
+---
+
+## Stack herunterfahren (Compose Down)
+
+Stoppt und entfernt Container + Netzwerk (Volumes bleiben erhalten):
+
+### Windows (PowerShell)
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/Tenny131/rotor-owl-analysis/main/docker-compose.yml | docker compose -f - down
+```
+
+### Linux / macOS (Terminal)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Tenny131/rotor-owl-analysis/main/docker-compose.yml | docker compose -f - down
+```
+
+---
+
+## Alles entfernen (inkl. Volumes)
+
+⚠️ Achtung: Dadurch werden auch persistierte Fuseki-Daten gelöscht.
+
+### Windows (PowerShell)
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/Tenny131/rotor-owl-analysis/main/docker-compose.yml | docker compose -f - down -v
+```
+
+### Linux / macOS (Terminal)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Tenny131/rotor-owl-analysis/main/docker-compose.yml | docker compose -f - down -v
+```
+
+---
+
+## Ports
+
+Standard-Ports:
+- Streamlit: 8501
+- Fuseki: 3030
+
+Falls ein Port bereits belegt ist, kann das Port-Mapping in der `docker-compose.yml` geändert werden, z.B.:
+
+```yaml
+ports:
+  - "8502:8501"
+```
+
 Dieses Projekt stellt eine **Kommandozeilenanwendung (CLI)** zur Verfügung für
 
 * Analyse von OWL-Ontologien (Struktur & Statistik)
