@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+title: "Rotor OWL Analysis: Ontology-Based Similarity Analysis for Rotating Machine Components"
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+authors:
+  - family-names: "Gezer"
+    given-names: "Ibrahim"
+    # email: "deine.email@example.com"
+    # orcid: "https://orcid.org/0000-0000-0000-0000"
+version: 0.1.0
+date-released: 2026-01-19
+repository-code: "https://github.com/Tenny131/rotor-owl-analysis"
+keywords:
+  - ontology
+  - similarity analysis
+  - OWL
+  - RDF
+  - machine learning
+  - knowledge graph
+  - semantic web
+  - mechanical engineering
+  - rotor design
+  - SPARQL
+license: MIT

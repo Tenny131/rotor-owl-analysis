@@ -1,5 +1,7 @@
 # rotor-owl-analysis
 
+[**English Version**](README_EN.md) | **Deutsche Version**
+
 **Ähnlichkeitsanalyse für rotierende Maschinenkomponenten (Rotoren)**
 
 Dieses Projekt ermöglicht:
