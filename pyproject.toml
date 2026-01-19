@@ -11,6 +11,8 @@ dependencies = [
     "scikit-learn",
     "SPARQLWrapper",
     "plotly",
+    "networkx",
+    "gensim",
 ]
 
 [project.scripts]

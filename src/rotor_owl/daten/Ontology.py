@@ -272,9 +272,9 @@ if __name__ == "__main__":
     print("\n[MAIN] --- Starting ontology creation process...")
     # ======================load data =========================
     print("\n[MAIN] --- Loading data from Excel file...")
-    # Bestimme Basis-Pfad relativ zu diesem Skript
+    # Bestimme Basis-Pfad relativ zu diesem Skript (jetzt in src/rotor_owl/daten/)
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    data_dir = os.path.join(script_dir, "..", "..", "data")
+    data_dir = os.path.join(script_dir, "..", "..", "..", "data")
     reference_dir = os.path.join(data_dir, "reference")
 
     file = os.path.join(reference_dir, "AE_Ontology_Entwurf_IN_Feedback.xlsx")

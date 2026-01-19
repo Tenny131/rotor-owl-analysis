@@ -60,13 +60,16 @@ def _parse_enum_domain(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
 
 
-def _sample_numeric(rng: random.Random, unit: str, name_hint: str) -> float:
+def _sample_numeric(
+    rng: random.Random, unit: str, name_hint: str, variance_factor: float = 1.0
+) -> float:
     """
     Samples einen numerischen Wert basierend auf der Einheit und einem Namens-Hinweis.
 
     :type rng: random.Random
     :type unit: str
     :type name_hint: str
+    :type variance_factor: float - Faktor zur Erhöhung der Varianz (1.0 = Standard, >1.0 = mehr Varianz)
     :rtype: float
     """
     u = unit.strip()
@@ -95,6 +98,14 @@ def _sample_numeric(rng: random.Random, unit: str, name_hint: str) -> float:
     if "tir" in nh or "rundlauf" in nh:
         lo, hi = 0.001, 0.2
 
+    # Varianz erhöhen durch Vergrößerung des Bereichs
+    if variance_factor != 1.0:
+        center = (lo + hi) / 2
+        range_half = (hi - lo) / 2
+        range_half *= variance_factor
+        lo = max(0.0 if u != "grad" else lo, center - range_half)
+        hi = center + range_half
+
     return round(rng.uniform(lo, hi), 4)
 
 
@@ -104,13 +115,25 @@ def generate_instances(
     n: int,
     seed: int,
     missing_rate: float = 0.05,
+    variance_factor: float = 1.0,
 ) -> Path:
+    """Generiert eine CSV-Datei mit synthetischen Instanz-Daten.
+
+    Args:
+        parameters_csv: Path zur Parameter-Spezifikations-CSV
+        out_dir: Ausgabe-Verzeichnis
+        n: Anzahl zu generierender Designs
+        seed: Random Seed für Reproduzierbarkeit
+        missing_rate: Anteil fehlender Werte (0.0-1.0)
+        variance_factor: Faktor zur Erhöhung der Varianz (1.0 = Standard, 2.0 = doppelte Range)
+
+    Returns:
+        Path zur generierten generated.csv
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     specs = _read_parameters_csv(parameters_csv)
 
-    """Generiert eine CSV-Datei mit synthetischen Instanz-Daten."""
-
-    out_path = out_dir / "instances.csv"
+    out_path = out_dir / "generated.csv"
     with out_path.open("w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
         w.writerow(
@@ -140,7 +163,9 @@ def generate_instances(
                 if not is_missing:
                     dt = spec.datatype.lower()
                     if dt == "numeric":
-                        value = str(_sample_numeric(rng_d, spec.unit, spec.parameter_id))
+                        value = str(
+                            _sample_numeric(rng_d, spec.unit, spec.parameter_id, variance_factor)
+                        )
                     elif dt == "boolean":
                         value = rng_d.choice(["ja", "nein"])
                     elif dt == "enum":
@@ -165,3 +190,65 @@ def generate_instances(
                 )
 
     return out_path
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Generiert synthetische Rotor-Datensätze mit konfigurierbarer Varianz"
+    )
+    parser.add_argument(
+        "--n", type=int, default=50, help="Anzahl zu generierender Rotoren (default: 50)"
+    )
+    parser.add_argument(
+        "--v",
+        type=float,
+        default=1.0,
+        help="Varianz-Faktor (1.0=Standard, 2.0=doppelt, 3.0=dreifach, default: 1.0)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=1, help="Random Seed für Reproduzierbarkeit (default: 1)"
+    )
+    parser.add_argument(
+        "--missing", type=float, default=0.0, help="Anteil fehlender Werte 0.0-1.0 (default: 0.0)"
+    )
+
+    args = parser.parse_args()
+
+    # Standard-Pfade
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent.parent.parent
+
+    # Suche nach parameters.csv in data/ und data/reference/
+    parameters_csv = project_root / "data" / "parameters.csv"
+    if not parameters_csv.exists():
+        parameters_csv = project_root / "data" / "reference" / "parameters.csv"
+
+    output_dir = project_root / "data" / "generated"
+
+    if not parameters_csv.exists():
+        print("❌ Fehler: parameters.csv nicht gefunden!")
+        print("   Gesucht in:")
+        print(f"   - {project_root / 'data' / 'parameters.csv'}")
+        print(f"   - {project_root / 'data' / 'reference' / 'parameters.csv'}")
+        print("\n   Bitte erstelle zuerst eine parameters.csv mit den Spalten:")
+        print("   Parameter_ID, Component_ID, ParamType_ID, DataType, Unit, EnumDomain")
+        exit(1)
+
+    print(f"Generiere {args.n} Rotoren...")
+    print(f"  Varianz-Faktor: {args.v}x")
+    print(f"  Missing Rate: {args.missing*100:.1f}%")
+    print(f"  Seed: {args.seed}")
+
+    result = generate_instances(
+        parameters_csv=parameters_csv,
+        out_dir=output_dir,
+        n=args.n,
+        seed=args.seed,
+        missing_rate=args.missing,
+        variance_factor=args.v,
+    )
+
+    print(f"✓ Generiert: {result}")
+    print(f"  {args.n} Rotoren mit {args.v}x Varianz")
