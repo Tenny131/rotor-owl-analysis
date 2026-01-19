@@ -2,7 +2,15 @@
 name = "rotor-owl-analysis"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["owlready2"]
+dependencies = [
+    "owlready2",
+    "pandas",
+    "numpy",
+    "rdflib",
+    "streamlit",
+    "scikit-learn",
+    "SPARQLWrapper",
+]
 
 [project.scripts]
 rotor-owl = "rotor_owl.cli:main"
