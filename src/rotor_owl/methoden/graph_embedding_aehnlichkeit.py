@@ -135,23 +135,22 @@ def train_graph_embeddings(
     workers: int = 4,
     dependencies: dict[tuple[str, str], dict] | None = None,
 ) -> Word2Vec:
-    """
-    Trainiert Node2Vec-Embeddings auf der Ontologie mit gewichteten Kanten.
+    """Trainiert Node2Vec-Embeddings mit gewichteten Kanten aus Dependencies.
 
     Args:
-        ontologie_graph: RDFlib Graph mit Ontologie
-        dimensions: Dimensionalität der Embeddings
-        window_size: Context-Window für Word2Vec
-        num_walks: Anzahl Random Walks pro Knoten
-        walk_length: Länge jedes Walks
-        p: Return parameter (1.0 = unbiased)
-        q: In-Out parameter (1.0 = unbiased)
-        min_count: Minimale Frequenz für Vokabular
-        workers: Anzahl paralleler Threads
-        dependencies: Optional dict mit Dependency-Informationen für gewichtete Kanten
+        ontologie_graph: RDFlib Graph
+        dimensions: Embedding-Dimensionalität
+        window_size: Word2Vec Context-Window
+        num_walks: Random Walks pro Knoten
+        walk_length: Walk-Länge
+        p: Return parameter
+        q: In-Out parameter
+        min_count: Min. Vokabular-Frequenz
+        workers: Parallele Threads
+        dependencies: (source, target) -> {"percentage": float} für Kantengewichte
 
     Returns:
-        Trainiertes Word2Vec-Modell mit Node-Embeddings
+        Word2Vec-Modell mit Node-Embeddings
     """
     # Konvertiere RDF zu NetworkX (mit gewichteten Kanten)
     G = _rdf_to_networkx(ontologie_graph, dependencies)

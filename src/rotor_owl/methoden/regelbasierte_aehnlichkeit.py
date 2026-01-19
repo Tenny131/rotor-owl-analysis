@@ -27,20 +27,14 @@ from rotor_owl.utils.math_utils import berechne_gewichtete_gesamt_similarity
 def berechne_automatische_gewichte(
     dependencies: dict[tuple[str, str], dict], normalization: str = "sum"
 ) -> dict[str, float]:
-    """
-    Berechnet Kategorie-Gewichte automatisch aus Dependency-Constraints.
-
-    Strategie:
-    - Für jede Komponente: Summiere alle incoming DependencyPercentages
-    - Komponenten mit hohen Dependencies bekommen höheres Gewicht
-    - Normalisiere auf Summe = 1.0
+    """Berechnet Komponenten-Gewichte aus Dependencies (incoming 100%, outgoing 50%).
 
     Args:
-        dependencies: Dict mit (source, target) -> {"strength": str, "percentage": float}
+        dependencies: (source, target) -> {"strength": str, "percentage": float}
         normalization: "sum" (Summe=1.0) oder "max" (Maximum=1.0)
 
     Returns:
-        Dict mit Komponenten-Name -> Gewicht (0.0 - 1.0)
+        Komponenten-Name -> Gewicht (normalisiert)
     """
     component_importance = defaultdict(float)
 
@@ -84,20 +78,14 @@ def berechne_automatische_gewichte(
 def map_komponenten_zu_kategorie_gewichte(
     komponenten_gewichte: dict[str, float], features_by_rotor: dict[str, dict]
 ) -> dict[str, float]:
-    """
-    Mappt Komponenten-Gewichte zu Kategorie-Gewichten (GEOM_MECH, MTRL_PROC, REQ_ELEC).
-
-    Strategie:
-    - Analysiere für jede Komponente, welche Parameter-Typen sie hat
-    - Verteile Komponenten-Gewicht proportional auf Kategorien
-    - Summiere für finale Kategorie-Gewichte
+    """Verteilt Komponenten-Gewichte proportional auf 3 Kategorien (GEOM_MECH, MTRL_PROC, REQ_ELEC).
 
     Args:
-        komponenten_gewichte: Dict mit Komponenten-Name -> Gewicht
+        komponenten_gewichte: Komponenten-Name -> Gewicht
         features_by_rotor: Feature-Daten aller Rotoren
 
     Returns:
-        Dict mit Kategorie -> Gewicht
+        Kategorie -> Gewicht (Summe=1.0)
     """
     from rotor_owl.config.kategorien import map_paramtype_to_kategorie, KATEGORIEN_3
 
@@ -162,24 +150,16 @@ def berechne_numerische_parameter_aehnlichkeit(
     parameter_schluessel: tuple[str, str],
     stats: dict[tuple[str, str], tuple[float, float]],
 ) -> float:
-    """
-    Numerische Similarity:
-      sim = 1 - |a-b| / (max-min)
+    """Berechnet numerische Similarity: sim = 1 - |a-b| / (max-min), geclampt auf [0,1].
 
     Args:
-        wert_a: Numerischer Wert von Parameter A
-        wert_b: Numerischer Wert von Parameter B
-        parameter_schluessel: Tuple (component_basis, parameter_basis)
+        wert_a: Wert von Rotor A
+        wert_b: Wert von Rotor B
+        parameter_schluessel: (component_basis, parameter_basis)
         stats: Min/Max-Statistik für Normierung
 
     Returns:
-        Similarity-Wert im Bereich [0.0, 1.0]
-
-    Grenzen:
-        - sim ist auf [0..1] gekappt
-
-    Spezialfall:
-        - Wenn max==min, dann gibt es keine Streuung -> Gleichheit = 1, sonst 0
+        Similarity [0.0, 1.0]
     """
     minimum_wert, maximum_wert = stats.get(parameter_schluessel, (wert_a, wert_a))
 
@@ -196,20 +176,14 @@ def berechne_numerische_parameter_aehnlichkeit(
 
 
 def berechne_kategorische_parameter_aehnlichkeit(wert_a: str, wert_b: str) -> float:
-    """
-    Kategorische / Enum / String Similarity:
-    - exakt gleich -> 1.0
-    - sonst -> 0.0
+    """Kategorische Similarity: 1.0 wenn identisch, sonst 0.0.
 
     Args:
-        wert_a: Kategorischer Wert von Parameter A
-        wert_b: Kategorischer Wert von Parameter B
+        wert_a: Wert von Rotor A
+        wert_b: Wert von Rotor B
 
     Returns:
-        1.0 bei exakter Übereinstimmung, sonst 0.0
-
-    Hinweis:
-        Später kann man hier fuzzy matching / Synonyme / Ontologie-Distanzen einbauen.
+        1.0 bei Übereinstimmung, sonst 0.0
     """
     return 1.0 if str(wert_a).strip() == str(wert_b).strip() else 0.0
 

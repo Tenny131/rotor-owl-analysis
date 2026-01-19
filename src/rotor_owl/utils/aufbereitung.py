@@ -4,10 +4,13 @@ import re
 
 
 def local_name(uri: str) -> str:
-    """
-    Extrahiert den lokalen Namen einer URI.
-    Beispiel:
-      http://.../ims#Rotor_D001  ->  Rotor_D001
+    """Extrahiert lokalen Namen aus URI (http://.../ims#Rotor_D001 -> Rotor_D001).
+
+    Args:
+        uri: Vollständige URI
+
+    Returns:
+        Lokaler Name (Fragment nach # oder letztes Segment)
     """
     if "#" in uri:
         return uri.split("#", 1)[1]
@@ -15,12 +18,13 @@ def local_name(uri: str) -> str:
 
 
 def strip_last_suffix(name: str) -> str:
-    """
-    Entfernt den letzten '_SUFFIX' Teil.
-    Beispiel:
-      C_WELLE_D001        -> C_WELLE
-      P_WELLE_TIR_D001    -> P_WELLE_TIR
-      Rotor_D001          -> Rotor
+    """Entfernt letztes _SUFFIX Segment (C_WELLE_D001 -> C_WELLE).
+
+    Args:
+        name: Name mit Suffix
+
+    Returns:
+        Name ohne letztes Suffix
     """
     if "_" not in name:
         return name
@@ -28,23 +32,13 @@ def strip_last_suffix(name: str) -> str:
 
 
 def normalize_param_name(parameter_name: str) -> str:
-    """
-    Normalisiert Parameter-Namen auf ihre semantische Basis.
+    """Normalisiert Parameter-Namen durch Entfernen von Instanz-Suffixen (_D001, _YYYY-MM-DD_1).
 
-    Regeln (in dieser Reihenfolge):
-    1) Entferne explizite Instanz-Suffixe wie:
-       - _D001, _D002, etc. (generierte Design-IDs)
-       - _YYYY-MM-DD_1 (Datums-basierte Instanzen)
-    2) Intelligenter Fallback:
-       - Entferne letztes Segment NUR wenn es instanz-artig aussieht
-       - Instanz-artig = sehr kurz (≤4 Zeichen) UND (nur Großbuchstaben ODER nur Ziffern)
+    Args:
+        parameter_name: Parameter-Name mit möglichem Instanz-Suffix
 
-    Beispiele:
-      P_WELLE_TIR_D001           -> P_WELLE_TIR
-      P_WELLE_TIR_2025-11-30_1   -> P_WELLE_TIR
-      P_AKTIV_LAENGE_XYZ         -> P_AKTIV_LAENGE  (XYZ sieht aus wie Instanz)
-      P_LUEFTER_DURCHMESSER      -> P_LUEFTER_DURCHMESSER  (bleibt unverändert)
-      P_WELLE_1                  -> P_WELLE  (Zahl-Suffix wird entfernt)
+    Returns:
+        Normalisierter Parameter-Name
     """
     original_name = parameter_name
 
@@ -71,17 +65,13 @@ def normalize_param_name(parameter_name: str) -> str:
 
 
 def safe_float(wert_text: str | None) -> float | None:
-    """
-    Konvertiert Text sicher zu float, wenn möglich.
+    """Konvertiert Text zu float, gibt None zurück wenn nicht parsebar.
 
-    Typische Fälle:
-    - "458.813" -> 458.813
-    - "344.1712e0" -> 344.1712
-    - "nan" / "" / None -> None
+    Args:
+        wert_text: Text-Wert (unterstützt Komma, Quotes, NaN)
 
-    Wichtig:
-    - Wenn es NICHT als Zahl interpretierbar ist, kommt None zurück
-      (dann wird es später als kategorisch / String behandelt)
+    Returns:
+        float oder None bei Fehler/nan/empty
     """
     if wert_text is None:
         return None

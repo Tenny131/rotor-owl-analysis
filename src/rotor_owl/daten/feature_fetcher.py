@@ -15,19 +15,13 @@ from rotor_owl.utils.aufbereitung import (
 
 @st.cache_data(show_spinner=False, ttl=60)
 def fetch_component_dependencies(endpoint_url: str) -> dict[tuple[str, str], dict]:
-    """
-    Extrahiert Dependency-Relationen zwischen Komponenten aus der Ontologie.
+    """Extrahiert Dependency-Relationen (Beeinflusst, affectsStrength, Anfordert) aus Ontologie.
 
-    Erfasst alle Relationen mit Patterns:
-    - *_Beeinflusst_* (beeinflusst)
-    - *_affectsStrength_* (Festigkeitseinfluss)
-    - *_Anfordert_* (Anforderungen)
+    Args:
+        endpoint_url: SPARQL-Endpoint URL
 
     Returns:
-        Dict mit (source_component, target_component) -> {
-            "strength": str,  # "hoch", "mittel", "niedrig"
-            "percentage": float  # 0.0 - 1.0
-        }
+        (source, target) -> {"strength": str, "percentage": float}
     """
     sparql_query = f"""
 PREFIX ims:  <{IMS_NAMESPACE}>
