@@ -10,6 +10,7 @@ dependencies = [
     "streamlit",
     "scikit-learn",
     "SPARQLWrapper",
+    "plotly",
 ]
 
 [project.scripts]

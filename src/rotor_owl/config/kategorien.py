@@ -19,9 +19,16 @@ KAT_REQ_ELEC = "K_REQ_ELEC"
 KATEGORIEN_3 = [KAT_GEOM_MECH, KAT_MTRL_PROC, KAT_REQ_ELEC]
 
 KATEGORIE_LABEL = {
-    KAT_GEOM_MECH: "Geometrie & Mechanik",
-    KAT_MTRL_PROC: "Material & Prozess",
-    KAT_REQ_ELEC: "Anforderung & Elektrik",
+    KAT_GEOM_MECH: "Geometrie",
+    KAT_MTRL_PROC: "Material",
+    KAT_REQ_ELEC: "Anforderungen",
+}
+
+# Detaillierte Beschreibung für Legende
+KATEGORIE_BESCHREIBUNG = {
+    KAT_GEOM_MECH: "Geometrie & Mechanik (GEOM, STRUCT, DYN)",
+    KAT_MTRL_PROC: "Material & Prozess (MTRL, MFG, COST)",
+    KAT_REQ_ELEC: "Anforderungen & Elektrik (REQ, ELEC, UNKNOWN)",
 }
 
 # ParamType_ID -> 3er Kategorie
