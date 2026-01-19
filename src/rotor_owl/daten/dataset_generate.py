@@ -17,6 +17,14 @@ class ParameterSpec:
 
 
 def _read_parameters_csv(path: Path) -> list[ParameterSpec]:
+    """
+    Liest Parameter-Spezifikationen aus CSV-Datei ein.
+
+    :param path: Path zur CSV-Datei
+    :type path: Path
+    :return: Liste von ParameterSpec Objekten
+    :rtype: list[ParameterSpec]
+    """
     with path.open("r", encoding="utf-8-sig", newline="") as f:
         r = csv.DictReader(f)
         specs: list[ParameterSpec] = []
@@ -35,6 +43,14 @@ def _read_parameters_csv(path: Path) -> list[ParameterSpec]:
 
 
 def _parse_enum_domain(s: str) -> list[str]:
+    """
+    Parst den Enum-Domain-String aus der CSV in eine Liste von erlaubten Werten.
+
+    :param s: Enum-Domain-String, z.B. "{val1, val2, val3}"
+    :type s: str
+    :return: Liste von erlaubten Werten
+    :rtype: list[str]
+    """
     s = s.strip()
     if not s:
         return []
@@ -45,6 +61,14 @@ def _parse_enum_domain(s: str) -> list[str]:
 
 
 def _sample_numeric(rng: random.Random, unit: str, name_hint: str) -> float:
+    """
+    Samples einen numerischen Wert basierend auf der Einheit und einem Namens-Hinweis.
+
+    :type rng: random.Random
+    :type unit: str
+    :type name_hint: str
+    :rtype: float
+    """
     u = unit.strip()
     if u == "mm":
         lo, hi = 10.0, 500.0
@@ -83,6 +107,8 @@ def generate_instances(
 ) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     specs = _read_parameters_csv(parameters_csv)
+
+    """Generiert eine CSV-Datei mit synthetischen Instanz-Daten."""
 
     out_path = out_dir / "instances.csv"
     with out_path.open("w", encoding="utf-8", newline="") as f:

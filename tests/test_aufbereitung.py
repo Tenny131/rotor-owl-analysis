@@ -1,6 +1,6 @@
 import pytest
 
-from rotor_owl.aufbereitung import normalize_param_name, safe_float
+from rotor_owl.utils.aufbereitung import normalize_param_name, safe_float
 
 
 @pytest.mark.parametrize(

@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from collections import defaultdict
 import streamlit as st
 
-from rotor_owl.konfiguration import IMS_NAMESPACE
-from rotor_owl.sparql_helpers import run_sparql
-from rotor_owl.aufbereitung import local_name, strip_last_suffix, normalize_param_name, safe_float
+from rotor_owl.config.konfiguration import IMS_NAMESPACE
+from rotor_owl.utils.sparql_helpers import run_sparql
+from rotor_owl.utils.aufbereitung import (
+    local_name,
+    strip_last_suffix,
+    normalize_param_name,
+    safe_float,
+)
 
 
 @st.cache_data(show_spinner=False, ttl=60)
@@ -77,3 +83,43 @@ WHERE {{
         }
 
     return features_by_rotor
+
+
+def build_numeric_stats(
+    features_by_rotor: dict[str, dict],
+) -> dict[tuple[str, str], tuple[float, float]]:
+    """
+    Baut min/max Statistik pro Parameter-Key (component_basis, parameter_basis).
+
+    Diese Funktion wird von allen Similarity-Methoden benötigt, die numerische
+    Parameter normieren müssen.
+
+    Args:
+        features_by_rotor: Feature-Daten aller Rotoren (von fetch_all_features)
+
+    Returns:
+        Dictionary mit min/max Werten pro Parameter-Schlüssel
+        stats[(C_WELLE, P_WELLE_TIR)] = (min_wert, max_wert)
+
+    Idee:
+        - Für numerische Similarity brauchen wir eine Normierung
+        - Dafür ist min/max über alle Rotoren eine einfache, robuste Basis
+    """
+    numerische_werte_pro_parameter: dict[tuple[str, str], list[float]] = defaultdict(list)
+
+    for _, rotor_daten in features_by_rotor.items():
+        for parameter_schluessel, parameter_datensatz in rotor_daten["params"].items():
+            parameter_wert = parameter_datensatz.get("value")
+
+            if isinstance(parameter_wert, (int, float)):
+                numerische_werte_pro_parameter[parameter_schluessel].append(float(parameter_wert))
+
+    stats: dict[tuple[str, str], tuple[float, float]] = {}
+
+    for parameter_schluessel, werte_liste in numerische_werte_pro_parameter.items():
+        if len(werte_liste) >= 2:
+            stats[parameter_schluessel] = (min(werte_liste), max(werte_liste))
+        elif len(werte_liste) == 1:
+            stats[parameter_schluessel] = (werte_liste[0], werte_liste[0])
+
+    return stats

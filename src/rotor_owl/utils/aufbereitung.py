@@ -21,9 +21,6 @@ def strip_last_suffix(name: str) -> str:
       C_WELLE_D001        -> C_WELLE
       P_WELLE_TIR_D001    -> P_WELLE_TIR
       Rotor_D001          -> Rotor
-
-    Achtung:
-    - Diese Funktion ist "generisch" und entfernt immer nur das letzte _... Stück.
     """
     if "_" not in name:
         return name
@@ -35,21 +32,23 @@ def normalize_param_name(parameter_name: str) -> str:
     Normalisiert Parameter-Namen auf ihre semantische Basis.
 
     Regeln (in dieser Reihenfolge):
-    1) Entferne Instanz-Suffixe wie:
-       - _D001
-       - _YYYY-MM-DD_1
-    2) Fallback:
-       - Entferne IMMER das letzte _SEGMENT
+    1) Entferne explizite Instanz-Suffixe wie:
+       - _D001, _D002, etc. (generierte Design-IDs)
+       - _YYYY-MM-DD_1 (Datums-basierte Instanzen)
+    2) Intelligenter Fallback:
+       - Entferne letztes Segment NUR wenn es instanz-artig aussieht
+       - Instanz-artig = sehr kurz (≤4 Zeichen) UND (nur Großbuchstaben ODER nur Ziffern)
 
     Beispiele:
       P_WELLE_TIR_D001           -> P_WELLE_TIR
       P_WELLE_TIR_2025-11-30_1   -> P_WELLE_TIR
-      P_AKTIV_LAENGE_XYZ         -> P_AKTIV_LAENGE
-      P_LUEFTER_D                -> P_LUEFTER
+      P_AKTIV_LAENGE_XYZ         -> P_AKTIV_LAENGE  (XYZ sieht aus wie Instanz)
+      P_LUEFTER_DURCHMESSER      -> P_LUEFTER_DURCHMESSER  (bleibt unverändert)
+      P_WELLE_1                  -> P_WELLE  (Zahl-Suffix wird entfernt)
     """
     original_name = parameter_name
 
-    # 1) Explizite bekannte Suffixe entfernen
+    # Explizite bekannte Suffixe entfernen
     parameter_name = re.sub(r"_D\d+$", "", parameter_name)
     parameter_name = re.sub(r"_\d{4}-\d{2}-\d{2}_\d+$", "", parameter_name)
 
@@ -57,9 +56,16 @@ def normalize_param_name(parameter_name: str) -> str:
     if parameter_name != original_name:
         return parameter_name
 
-    # 2) Fallback: letztes Segment entfernen
+    # Fallback: nur "instanz-artige" Suffixe entfernen
     if "_" in parameter_name:
-        return parameter_name.rsplit("_", 1)[0]
+        parts = parameter_name.rsplit("_", 1)
+        letztes_segment = parts[1]
+        ist_instanz_suffix = len(letztes_segment) <= 4 and (
+            letztes_segment.isupper() or letztes_segment.isdigit()
+        )
+
+        if ist_instanz_suffix:
+            return parts[0]
 
     return parameter_name
 

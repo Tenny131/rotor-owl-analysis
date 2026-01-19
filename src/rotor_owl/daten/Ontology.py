@@ -1,6 +1,6 @@
 # ======================import pakages =========================
 import pandas as pd
-import datetime
+import os
 
 # RDFLib pakages
 from rdflib import Graph, Literal, URIRef, Namespace
@@ -22,7 +22,6 @@ def component_class_mapper(data, graph):
     print("\n[component_class_mapper] --- Defining Artefact as subclass of Object...")
 
     for i in range(data.shape[0]):
-        str(data.loc[i, "Component_ID"])
         label_ = str(data.loc[i, "Label"])
         description_ = str(data.loc[i, "Description"]) if "Description" in data.columns else None
 
@@ -69,89 +68,107 @@ def parameter_class_mapper(data, graph):
     print("\n[parameter_class_mapper] --- Parameter classes mapped successfully.")
 
 
-def data_mapper(data, g, num):
+def data_mapper(data, g, num=None):
     """
     Maps the components and parameters from the data to the RDF graph.
-    Args:
-        data (dict): A dictionary containing the data from the Excel sheets.
-        g (Graph): An RDFLib Graph object to which the data will be added.
-        num (int): A numeric identifier for the mapping process.
+    Creates separate individuals for each Design_ID with data property assertions.
 
+    Args:
+        data (pd.DataFrame): DataFrame containing parameter data with Design_ID column.
+        g (Graph): An RDFLib Graph object to which the data will be added.
+        num (int, optional): Legacy parameter, not used when Design_ID is present.
     """
 
     print("\n[data_mapper] --- Mapping data instances to ontology...")
-    # get the unique component IDs
-    liste = data["Component_ID"].tolist()
-    liste = list(set(liste))
 
-    # dictionary to map component IDs to class names
+    # Dictionary to map component IDs to class names
     dict_components = {
         "C_WELLE": "Welle",
+        "C_WELLEENDE": "Welleende",
         "C_AKTIVTEIL": "Aktivteil",
         "C_LUEFTER": "Lüfter",
         "C_BLECHPAKET": "Blechpaket",
         "C_WUCHTSCHEIBEN": "Wuchtscheiben",
     }
 
-    # == create a Rotor instance
-    rotor_instance = URIRef("http://ontology.innomotics.net/ims#Rotor_" + str(num))
-    PhysicalObject = URIRef("http://ontology.innomotics.net/ims#PhysicalObject")
-    g.add((rotor_instance, RDF.type, PhysicalObject))
-
-    # add component instances to the graph
-    for component in liste:
-        class_name = dict_components[component]
-        component = component + "_" + str(num)
-        component_ = IMS[component]
-        g.add((component_, RDF.type, IMS[class_name]))
-        g.add((rotor_instance, IMS.composed_of, component_))
-
-    # define properties
+    # Define properties
     composed_of = URIRef("http://ontology.innomotics.net/ims#composed_of")
     hasvalue = URIRef("http://ontology.innomotics.net/ims#hasValue")
     hasunit = URIRef("http://ontology.innomotics.net/ims#hasUnit")
     hastype = URIRef("http://ontology.innomotics.net/ims#hasType")
-    #
+
+    # Define property types (only once)
     g.add((hasvalue, RDF.type, OWL.DatatypeProperty))
     g.add((hasvalue, RDFS.domain, IMS["Parameter"]))
+
+    g.add((hasunit, RDF.type, OWL.DatatypeProperty))
+    g.add((hasunit, RDFS.domain, IMS["Parameter"]))
+
+    g.add((hastype, RDF.type, OWL.DatatypeProperty))
+    g.add((hastype, RDFS.domain, IMS["Parameter"]))
+
     g.add((composed_of, RDF.type, OWL.ObjectProperty))
     g.add((composed_of, RDFS.domain, IMS["Artefact"]))
     g.add((composed_of, RDFS.range, IMS["Parameter"]))
 
-    g.add((hasunit, RDF.type, OWL.DatatypeProperty))
-    g.add((hasunit, RDFS.domain, IMS["Parameter"]))
-    # g.add((hasunit, RDFS.range, IMS['Unit']))
+    # Get unique Design IDs
+    design_ids = data["Design_ID"].unique() if "Design_ID" in data.columns else [str(num)]
 
-    g.add((hastype, RDF.type, OWL.DatatypeProperty))
-    g.add((hastype, RDFS.domain, IMS["Parameter"]))
-    # g.add((hastype, RDFS.range, IMS['Type']))
+    for design_id in design_ids:
+        # Filter data for this design
+        if "Design_ID" in data.columns:
+            design_data = data[data["Design_ID"] == design_id]
+        else:
+            design_data = data
 
-    # add parameter instances to the graph
-    date = datetime.datetime.now().strftime("%Y-%m-%d")
-    for i in range(data.shape[0]):
-        param_id = data.loc[i, "Parameter_ID"]
-        param_type = data.loc[i, "ParamType_ID"]
-        Parent = data.loc[i, "Component_ID"]
-        data.loc[i, "Name"]
-        Definition = data.loc[i, "Definition"]
-        value = data.loc[i, "Value"]
-        unit = data.loc[i, "Unit"]
-        fragment = param_id.strip().replace(" ", "_").replace(")", "_").replace("(", "_")
+        print(f"  Processing design: {design_id}")
 
-        # Create URI for the parameter and map its properties
-        fragment = fragment + "_" + date + "_" + str(num)
-        param_id_uri = URIRef("http://ontology.innomotics.net/ims#" + fragment)
-        # print(f"\n[data_mapper] --- Mapping parameter instance: {fragment}")
-        g.add((param_id_uri, RDF.type, IMS[param_id]))
-        g.add((param_id_uri, RDFS.label, Literal(fragment, datatype=XSD.string)))
-        g.add((param_id_uri, RDFS.comment, Literal(Definition, datatype=XSD.string)))
-        g.add((param_id_uri, hasvalue, Literal(value, datatype=XSD.string)))
-        g.add((param_id_uri, hasunit, Literal(unit, datatype=XSD.string)))
-        g.add((param_id_uri, hastype, Literal(param_type, datatype=XSD.string)))
+        # Create Rotor instance for this design
+        rotor_instance = URIRef(f"http://ontology.innomotics.net/ims#Rotor_{design_id}")
+        PhysicalObject = URIRef("http://ontology.innomotics.net/ims#PhysicalObject")
+        g.add((rotor_instance, RDF.type, PhysicalObject))
+        g.add((rotor_instance, RDFS.label, Literal(f"Rotor_{design_id}", datatype=XSD.string)))
 
-        # parent composed of parameter
-        Parent = Parent + "_" + str(num)
-        g.add((IMS[Parent], composed_of, param_id_uri))
+        # Get unique components for this design
+        components = design_data["Component_ID"].unique()
+
+        # Create component instances
+        for component in components:
+            if component in dict_components:
+                class_name = dict_components[component]
+                component_instance = f"{component}_{design_id}"
+                component_uri = IMS[component_instance]
+                g.add((component_uri, RDF.type, IMS[class_name]))
+                g.add((component_uri, RDFS.label, Literal(component_instance, datatype=XSD.string)))
+                g.add((rotor_instance, composed_of, component_uri))
+
+        # Create parameter instances with data property assertions
+        for idx, row in design_data.iterrows():
+            param_id = row["Parameter_ID"]
+            param_type = row["ParamType_ID"]
+            component_id = row["Component_ID"]
+            value = row["Value"]
+            unit = row["Unit"]
+
+            # Create unique parameter instance name
+            param_fragment = param_id.strip().replace(" ", "_").replace("(", "_").replace(")", "_")
+            param_instance_name = f"{param_fragment}_{design_id}"
+            param_instance_uri = URIRef(f"http://ontology.innomotics.net/ims#{param_instance_name}")
+
+            # Create parameter individual as instance of its parameter class
+            g.add((param_instance_uri, RDF.type, IMS[param_id]))
+            g.add(
+                (param_instance_uri, RDFS.label, Literal(param_instance_name, datatype=XSD.string))
+            )
+
+            # Add data property assertions
+            g.add((param_instance_uri, hasvalue, Literal(str(value), datatype=XSD.string)))
+            g.add((param_instance_uri, hasunit, Literal(str(unit), datatype=XSD.string)))
+            g.add((param_instance_uri, hastype, Literal(param_type, datatype=XSD.string)))
+
+            # Link parameter to its parent component
+            component_instance_name = f"{component_id}_{design_id}"
+            g.add((IMS[component_instance_name], composed_of, param_instance_uri))
 
     print("\n[data_mapper] --- Data instances mapped successfully.")
 
@@ -171,7 +188,6 @@ def abhaengigkeit_mapper(data, g, num):
         Quelle = data.loc[i, "Quelle"]
         relation = data.loc[i, "Relation"]
         Ziel = data.loc[i, "Ziel"]
-        data.loc[i, "Typ"]
         Staerke = data.loc[i, "Staerke"]
         Abhängigkeit = data.loc[i, "Abhängigkeit_%"]
         Notiz = data.loc[i, "Notiz"]
@@ -256,24 +272,35 @@ if __name__ == "__main__":
     print("\n[MAIN] --- Starting ontology creation process...")
     # ======================load data =========================
     print("\n[MAIN] --- Loading data from Excel file...")
-    file = "../Data/AE_Ontology_Entwurf.xlsx"
+    # Bestimme Basis-Pfad relativ zu diesem Skript
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(script_dir, "..", "..", "data")
+    reference_dir = os.path.join(data_dir, "reference")
+
+    file = os.path.join(reference_dir, "AE_Ontology_Entwurf_IN_Feedback.xlsx")
     sheet_names = pd.ExcelFile(file).sheet_names  # Get all sheet names
     data = pd.read_excel(file, sheet_name=None)  # Load all sheets
     # print(sheet_names)
 
-    # =======================load filled data =========================
-    file_filled = "../Data/AE_Ontology_Entwurf_filled.xlsx"
-    file_filled_feedback = "../Data/AE_Ontology_Entwurf_IN_Feedback.xlsx"
-    sheet_names_filled = pd.ExcelFile(file_filled).sheet_names  # Get all sheet names
-    data_filled = pd.read_excel(file_filled, sheet_name=None)  # Load all sheets
-    # print(sheet_names_filled)
+    # =======================load filled data from CSV =========================
+    print("\n[MAIN] --- Loading generated parameter data from CSV...")
+    csv_file = os.path.join(data_dir, "generated", "generated.csv")
+    df_generated = pd.read_csv(csv_file)
+    # Konvertiere CSV-Format zu Excel-Sheet-Format für data_mapper
+    # CSV: Design_ID,Component_ID,Parameter_ID,ParamType_ID,DataType,Unit,Value,IsMissing
+    # Behalte alle relevanten Spalten inklusive Design_ID
+    df_parameters_filled = df_generated[
+        ["Design_ID", "Parameter_ID", "Component_ID", "ParamType_ID", "Value", "Unit"]
+    ].copy()
+    df_parameters_filled["Name"] = df_parameters_filled["Parameter_ID"]  # Name = Parameter_ID
+    df_parameters_filled["Definition"] = ""  # Platzhalter für Definition
     # ======================print sheet names =========================
     print("\n[MAIN] --- Data loaded successfully.")
 
     # ====================== Load basis ontology =========================
     print("\n[MAIN] --- Loading base ontology...")
 
-    file_ontology = "../Data/Ontology_Base.owl"
+    file_ontology = os.path.join(reference_dir, "Ontology_Base.owl")
     g = Graph()
     g.parse(file_ontology, format="xml")
 
@@ -297,9 +324,8 @@ if __name__ == "__main__":
     num = 1  # Initialize numeric identifier for data mapping
     # Increment this value if needed for multiple mappings( for example in a loop for more Rotor types)
     # ============ component sheet =========================
-    # TODO:sheet = sheet_names[0] # "Components"
-    sheet = str(sheet_names[0])  # "Components"
-    df_components = data[sheet]
+    sheet = sheet_names[0]  # "Components"
+    df_components = data[sheet]  # type: ignore
 
     print("\n[MAIN] --- Mapping components class to ontology classes...")
     # run the class-mapper function
@@ -316,24 +342,23 @@ if __name__ == "__main__":
 
     # ============ map instances =========================
     print("\n[MAIN] --- Mapping data instances to ontology...")
-    data_param = data_filled["Parameters"]
-    # run the data-mapper function
-    data_mapper(data_param, g, num)
-    print("\n[MAIN] --- Mapping data instances to ontology...")
+    # Verwende die aus CSV konvertierten Parameter-Daten
+    data_mapper(df_parameters_filled, g, num)
+    print("\n[MAIN] --- Data instances mapped successfully.")
 
     # ====== Map Abhangigkeit =========================
     print("\n[MAIN] --- Mapping Abhängigkeiten to ontology...")
 
+    file_feedback = os.path.join(reference_dir, "AE_Ontology_Entwurf_IN_Feedback.xlsx")
     sheet_param = "Rotor_abhaengigkeiten_umfrage"
-    df_relation = pd.read_excel(file_filled_feedback, sheet_name=sheet_param, header=1)
+    df_relation = pd.read_excel(file_feedback, sheet_name=sheet_param, header=1)
     abhaengigkeit_mapper(df_relation, g, num)
 
     print("\n[MAIN] --- Abhängigkeiten mapped successfully.")
 
     # ======================save ontology =========================
-    date = datetime.datetime.now().strftime("%Y-%m-%d")
     print("\n[MAIN] --- Saving ontology to file...")
-    output_file = "../Data/Ontology_Components_" + date + ".owl"
+    output_file = os.path.join(data_dir, "rotor_ontologie.owl")
     g.serialize(destination=output_file, format="xml")
 
     print(f"\n[MAIN] --- Ontology saved successfully to {output_file}.")

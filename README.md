@@ -1,190 +1,125 @@
 # rotor-owl-analysis
 
-Dieses Projekt stellt eine **Kommandozeilenanwendung (CLI)** zur Verfügung für
+**Ähnlichkeitsanalyse für rotierende Maschinenkomponenten (Rotoren)**
 
-* Analyse von OWL-Ontologien (Struktur & Statistik)
-* Extraktion parameterisierter Features aus Baugruppen
-* Generierung synthetischer Instanzdatensätze (CSV)
-* Ähnlichkeitsanalyse von Designs mittels **Top-k Jaccard Similarity**
+Dieses Projekt ermöglicht:
+* Ontologie-basierte Feature-Extraktion aus Rotor-Designs
+* Generierung synthetischer Datensätze (CSV)
+* **Multi-Methoden Similarity-Analyse**:
+  * klassisch (gewichtete Parameter-Similarity)
+  * ML-basiert (kNN, PCA, Autoencoder, K-Means)
+* **Interaktive Web-UI** (Streamlit) zur Visualisierung
 
-  * optional **gewichtete** Similarity nach ParamType
-* reproduzierbare Auswertung (Seed-basiert, CI-fähig)
+Das System nutzt OWL-Ontologien zur semantischen Modellierung von Rotor-Parametern und Apache Jena Fuseki als SPARQL-Endpoint.
 
-Ziel ist es, **Similarity-Ansätze für rotierende Maschinenkomponenten**
-(z. B. Rotoren, Wellen, Aktivteile) systematisch zu untersuchen.
+**Features:**
+* Query-Rotor auswählen
+* Similarity-Methode wählen (A-D)
+* Kategorie-Gewichte anpassen
+* Top-k ähnliche Rotoren finden
+* Detaillierte Parameter-Vergleiche ansehen
+---
+
+## 📋 Voraussetzungen
+
+* [**Docker**](https://www.docker.com/products/docker-desktop/) installiert
+  * Für Windows: WSL2 Backend empfohlen
+* Alternativ:
+  * [Python](https://www.python.org/downloads/release/python-31212/) **3.12**
+  * [Apache Jena Fuseki](https://jena.apache.org/download/) **5.6.0**
 
 ---
 
-## Voraussetzungen
+## 🚀 Schnellstart mit Docker
 
-* Python **≥ 3.12**
-* Git
-* Windows PowerShell (oder vergleichbares Terminal)
-
----
-
-## Installation (Entwicklungsmodus)
+### 1. Repository klonen
 
 ```powershell
-git clone https://github.com/<user>/rotor-owl-analysis.git
+git clone https://github.com/Tenny131/rotor-owl-analysis.git
 cd rotor-owl-analysis
+```
 
+### 2. Docker-Container starten
+
+```powershell
+# Services starten (Fuseki + Streamlit App)
+docker-compose up -d
+
+# Logs ansehen
+docker-compose logs -f
+```
+
+**Services:**
+* **Fuseki**: http://localhost:3030
+* **Streamlit App**: http://localhost:8501
+
+### 3. Ontologie in Fuseki laden
+
+* Docker lädt die Ontologie automatisch hoch.
+
+### 4. Streamlit App nutzen
+
+Öffne http://localhost:8501 im Browser.
+
+
+## 🔧 Lokale Entwicklung (ohne Docker)
+
+### 1. Installation
+
+```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .
 ```
 
-Der `-e`-Modus stellt sicher, dass Änderungen am Code sofort wirksam sind.
-
----
-
-## CLI-Überblick
+### 2. Synthetische Datensätze generieren (Optional)
 
 ```powershell
-rotor-owl --help
+# Erzeugt 50 Design-Varianten mit 5% Wahrscheinlichkeit einer Datenlücke
+rotor-owl generate --n 50 --missing-rate 0.05 --seed 42 --out data/generated
 ```
 
-Verfügbare Subcommands (Auszug):
+Erzeugt `data/generated/instances.csv` mit synthetischen Rotor-Parametern.
 
-* `stats` – Ontologie-Statistiken
-* `features` – Feature-Extraktion aus OWL
-* `generate` – Instanz-Datensätze erzeugen
-* `similarity` – Top-k Jaccard-Similarity
-
----
-
-## Ontologie analysieren
-
-### Ontologie-Statistik anzeigen
+### 3. Ontologie erstellen
 
 ```powershell
-rotor-owl stats example.owl --top-prefixes 5
+# Virtual Environment aktivieren
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e .
+
+# Ontologie erstellen
+python src/rotor_owl/Ontology.py
 ```
 
-Ausgabe u. a.:
+Dies erstellt `data/rotor_ontologie.owl`.
 
-* Anzahl Klassen
-* Anzahl Object Properties
-* Anzahl Data Properties
-* Anzahl Individuen
-* wichtigste IRI-Namensräume
 
----
-
-## Features aus einer Baugruppe extrahieren
+### 4. Fuseki manuell starten
 
 ```powershell
-rotor-owl features example.owl \
-  --assembly-iri "http://ontology.innomotics.net/ims#C_WELLE_1" \
-  --limit 20
+fuseki-server --loc=tdb2 --update /rotors
 ```
 
-Extrahiert parameterisierte Features (z. B. Geometrie, Material, Anforderungen),
-die über Relationen wie `ims:composed_of` an eine konkrete Baugruppe gebunden sind.
+### 5. Ontologie in Fuseki laden
+1. Öffne http://localhost:3030
+2. Login: `admin` / `admin`
+3. Gehe zu "manage datasets"
+4. Erstelle Dataset `rotors`
+5. "upload files" → `data/rotor_ontologie.owl` hochladen
+* Persistent speichern auswählen und Hochladen klicken
 
-### Feature-Export als CSV
+### 6. Streamlit lokal
 
 ```powershell
-rotor-owl features example.owl \
-  --assembly-iri "http://ontology.innomotics.net/ims#C_WELLE_1" \
-  --out features_welle.csv
+streamlit run src/rotor_owl/streamlit_app.py
 ```
 
-CSV-Spalten:
+Endpoint konfigurieren in `src/rotor_owl/konfiguration.py`:
 
-* `feature_name`
-* `value`
-* `unit`
-* `type`
-* `feature_iri`
-* `feature_class_iri`
-* `comment`
-
----
-
-## Instanzdatensatz generieren (synthetisch)
-
-Zur Entwicklung und zum Testen werden **reproduzierbare CSV-Datensätze**
-aus der Feature-Struktur erzeugt.
-
-```powershell
-rotor-owl generate --n 10 --seed 1
-```
-
-Ergebnis:
-
-```text
-data/generated/instances.csv
-```
-
-**Interpretation:**
-
-* Jede `Design_ID` (z. B. `D001`) entspricht **einer Instanz / einem Design**
-* Jede Zeile ist ein **Parameter-Feature** dieser Instanz
-* `IsMissing=1` kennzeichnet bewusst fehlende Werte
-* Seed garantiert reproduzierbare Datensätze
-
----
-
-## Similarity-Analyse (Top-k Jaccard)
-
-### Ungewichtete Similarity
-
-```powershell
-rotor-owl similarity data/generated/instances.csv D001 --k 5
-```
-
-Ausgabe (Beispiel):
-
-```text
-Query: D001
-TOP-5 similar designs (Jaccard):
-
-D002  similarity=0.8537
-D003  similarity=0.8124
-D004  similarity=0.7912
-...
+```python
+FUSEKI_ENDPOINT_STANDARD = "http://localhost:3030/rotors/sparql"
 ```
 
 ---
-
-### Gewichtete Similarity (ParamType-Gewichte)
-
-```powershell
-rotor-owl similarity data/generated/instances.csv D001 \
-  --k 5 \
-  --weights GEOM=1.0,REQ=0.3,DYN=1.2
-```
-
-* Gewichtung erfolgt **auf Feature-Ebene**
-* Standard: alle ParamTypes Gewicht = 1.0
-* Semantische Erweiterungen (Relationen, Abhängigkeiten) sind vorbereitet
-
----
-
-## Entwicklung & Qualitätssicherung
-
-### Code-Qualität prüfen
-
-```powershell
-ruff check .
-```
-
-### Tests ausführen
-
-```powershell
-pytest -v
-```
-
-Alle Similarity-Tests prüfen ausschließlich **Top-k-Ergebnisse**
-(keine redundanten Paarvergleiche).
-
----
-
-## Continuous Integration (CI)
-
-* Automatische Ausführung von
-
-  * `ruff`
-  * `pytest`
-* bei jedem Push & Pull Request über **GitHub Actions**
