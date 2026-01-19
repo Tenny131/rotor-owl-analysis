@@ -14,6 +14,79 @@ from rotor_owl.utils.aufbereitung import (
 
 
 @st.cache_data(show_spinner=False, ttl=60)
+def fetch_component_dependencies(endpoint_url: str) -> dict[tuple[str, str], dict]:
+    """
+    Extrahiert Dependency-Relationen zwischen Komponenten aus der Ontologie.
+
+    Erfasst alle Relationen mit Patterns:
+    - *_Beeinflusst_* (beeinflusst)
+    - *_affectsStrength_* (Festigkeitseinfluss)
+    - *_Anfordert_* (Anforderungen)
+
+    Returns:
+        Dict mit (source_component, target_component) -> {
+            "strength": str,  # "hoch", "mittel", "niedrig"
+            "percentage": float  # 0.0 - 1.0
+        }
+    """
+    sparql_query = f"""
+PREFIX ims:  <{IMS_NAMESPACE}>
+PREFIX rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+SELECT ?property ?strength ?percentage
+WHERE {{
+  ?property rdf:type <http://www.w3.org/2002/07/owl#ObjectProperty> .
+  OPTIONAL {{ ?property ims:hasStrength ?strength . }}
+  OPTIONAL {{ ?property ims:hasDependencyPercentage ?percentage . }}
+  
+  FILTER(
+    CONTAINS(STR(?property), "Beeinflusst") ||
+    CONTAINS(STR(?property), "affectsStrength") ||
+    CONTAINS(STR(?property), "Anfordert")
+  )
+}}
+"""
+    query_json = run_sparql(endpoint_url, sparql_query)
+    sparql_zeilen = query_json["results"]["bindings"]
+
+    dependencies = {}
+
+    for zeile in sparql_zeilen:
+        property_uri = zeile["property"]["value"]
+        property_name = local_name(property_uri)
+
+        # Parse verschiedene Patterns:
+        # "Blechpaket_Beeinflusst_Welle_1" -> ("Blechpaket", "Welle")
+        # "Blechpaket_affectsStrength_Stanzkonzept_1" -> ("Blechpaket", "Stanzkonzept")
+        # "Wellenenden_Anfordert_Kundenanforderung_1" -> ("Wellenenden", "Kundenanforderung")
+
+        separator = None
+        if "_Beeinflusst_" in property_name:
+            separator = "_Beeinflusst_"
+        elif "_affectsStrength_" in property_name:
+            separator = "_affectsStrength_"
+        elif "_Anfordert_" in property_name:
+            separator = "_Anfordert_"
+
+        if not separator:
+            continue
+
+        parts = property_name.split(separator)
+        if len(parts) != 2:
+            continue
+
+        source = parts[0].replace(".", "_")
+        target = strip_last_suffix(parts[1])  # Entferne _1 am Ende
+
+        strength = zeile.get("strength", {}).get("value", "mittel")
+        percentage_str = zeile.get("percentage", {}).get("value", "0.5")
+        percentage = safe_float(percentage_str) or 0.5
+
+        dependencies[(source, target)] = {"strength": strength, "percentage": percentage}
+
+    return dependencies
+
+
+@st.cache_data(show_spinner=False, ttl=60)
 def fetch_all_features(endpoint_url: str) -> dict[str, dict]:
     """
     Liest ALLE Rotor-Features aus Fuseki und baut eine kompakte Datenstruktur auf.

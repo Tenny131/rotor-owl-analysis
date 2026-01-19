@@ -38,6 +38,7 @@ def berechne_topk_aehnlichkeiten_hybrid(
     embedding_dim: int = 64,
     num_walks: int = 5,
     walk_length: int = 30,
+    dependencies: dict[tuple[str, str], dict] | None = None,
 ) -> list[tuple[str, float, dict[str, float], dict[str, float]]]:
     """
     Kombiniert mehrere Similarity-Methoden zu einer gewichteten Hybrid-Similarity.
@@ -146,6 +147,7 @@ def berechne_topk_aehnlichkeiten_hybrid(
                 num_walks=num_walks,
                 walk_length=walk_length,
                 k=len(rotor_ids),
+                dependencies=dependencies,
             )
             methoden_ergebnisse["Graph-Embeddings (Node2Vec)"] = {
                 rotor_id: (sim_total, sim_pro_kat) for rotor_id, sim_total, sim_pro_kat in results

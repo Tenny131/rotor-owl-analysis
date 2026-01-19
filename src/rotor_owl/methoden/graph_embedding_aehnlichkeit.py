@@ -133,9 +133,10 @@ def train_graph_embeddings(
     q: float = 1.0,
     min_count: int = 1,
     workers: int = 4,
+    dependencies: dict[tuple[str, str], dict] | None = None,
 ) -> Word2Vec:
     """
-    Trainiert Node2Vec-Embeddings auf der Ontologie.
+    Trainiert Node2Vec-Embeddings auf der Ontologie mit gewichteten Kanten.
 
     Args:
         ontologie_graph: RDFlib Graph mit Ontologie
@@ -147,12 +148,13 @@ def train_graph_embeddings(
         q: In-Out parameter (1.0 = unbiased)
         min_count: Minimale Frequenz für Vokabular
         workers: Anzahl paralleler Threads
+        dependencies: Optional dict mit Dependency-Informationen für gewichtete Kanten
 
     Returns:
         Trainiertes Word2Vec-Modell mit Node-Embeddings
     """
-    # Konvertiere RDF zu NetworkX
-    G = _rdf_to_networkx(ontologie_graph)
+    # Konvertiere RDF zu NetworkX (mit gewichteten Kanten)
+    G = _rdf_to_networkx(ontologie_graph, dependencies)
 
     # Generiere Random Walks
     walks = generate_random_walks(G, num_walks, walk_length, p, q)
@@ -173,15 +175,18 @@ def train_graph_embeddings(
     return model
 
 
-def _rdf_to_networkx(rdf_graph: Graph) -> nx.Graph:
+def _rdf_to_networkx(
+    rdf_graph: Graph, dependencies: dict[tuple[str, str], dict] | None = None
+) -> nx.Graph:
     """
-    Konvertiert RDFlib Graph zu NetworkX Graph.
+    Konvertiert RDFlib Graph zu NetworkX Graph mit gewichteten Kanten.
 
     Args:
         rdf_graph: RDFlib Graph
+        dependencies: Optional dict mit (source, target) -> {"strength": str, "percentage": float}
 
     Returns:
-        NetworkX Graph (ungerichtet)
+        NetworkX Graph (ungerichtet, mit gewichteten Kanten wenn dependencies gegeben)
     """
     G = nx.Graph()
 
@@ -189,15 +194,58 @@ def _rdf_to_networkx(rdf_graph: Graph) -> nx.Graph:
     for s, p, o in rdf_graph:
         subject = str(s)
         obj = str(o)
+        predicate = str(p)
 
         # Füge Knoten hinzu
         G.add_node(subject)
         if not obj.startswith("http://www.w3.org/2001/XMLSchema#"):
             # Nur URIs, keine Literale als Knoten
             G.add_node(obj)
-            G.add_edge(subject, obj, predicate=str(p))
+
+            # Bestimme Kantengewicht aus Dependencies
+            weight = 1.0  # Default
+            if dependencies:
+                # Extrahiere Komponenten-Namen aus URIs
+                # z.B. "http://...#C_BLECHPAKET_D001" -> "Blechpaket"
+                source_comp = _extract_component_name(subject)
+                target_comp = _extract_component_name(obj)
+
+                if source_comp and target_comp:
+                    dep_key = (source_comp, target_comp)
+                    if dep_key in dependencies:
+                        weight = dependencies[dep_key]["percentage"]
+                    # Auch umgekehrte Richtung prüfen (bidirektional)
+                    elif (target_comp, source_comp) in dependencies:
+                        weight = dependencies[(target_comp, source_comp)]["percentage"]
+
+            G.add_edge(subject, obj, predicate=predicate, weight=weight)
 
     return G
+
+
+def _extract_component_name(uri: str) -> str | None:
+    """
+    Extrahiert Komponenten-Name aus URI.
+
+    "http://...#C_BLECHPAKET_D001" -> "blechpaket"
+    "http://...#C_WELLE_1" -> "welle"
+
+    WICHTIG: Verwendet lower() für konsistentes Matching mit map_komponenten_zu_kategorie_gewichte()
+    """
+    if "#" not in uri:
+        return None
+
+    fragment = uri.split("#")[-1]
+
+    # C_BLECHPAKET_D001 -> BLECHPAKET -> blechpaket
+    if fragment.startswith("C_"):
+        parts = fragment[2:].split("_")
+        # Entferne Suffix (_D001, _1, etc.)
+        component = "_".join([p for p in parts if not (p.startswith("D") or p.isdigit())])
+        # Lowercase für konsistentes Matching
+        return component.lower() if component else None
+
+    return None
 
 
 # ============================================================================
@@ -282,9 +330,10 @@ def berechne_topk_aehnlichkeiten_graph_embedding(
     num_walks: int = 10,
     walk_length: int = 80,
     k: int = 5,
+    dependencies: dict[tuple[str, str], dict] | None = None,
 ) -> list[tuple[str, float, dict[str, float]]]:
     """
-    Berechnet Top-k ähnlichste Rotoren mittels Graph-Embeddings.
+    Berechnet Top-k ähnlichste Rotoren mittels Graph-Embeddings mit gewichteten Kanten.
 
     Args:
         query_rotor_id: ID des Query-Rotors
@@ -295,18 +344,20 @@ def berechne_topk_aehnlichkeiten_graph_embedding(
         num_walks: Anzahl Random Walks
         walk_length: Länge der Walks
         k: Anzahl zurückzugebender Top-Matches
+        dependencies: Optional dict mit Dependency-Informationen für gewichtete Kanten
 
     Returns:
         Liste von (rotor_id, similarity_gesamt, similarity_pro_kategorie)
         Sortiert nach similarity_gesamt (absteigend)
     """
-    # 1. Trainiere Graph-Embeddings (nur einmal)
+    # 1. Trainiere Graph-Embeddings mit gewichteten Kanten
     embedding_model = train_graph_embeddings(
         ontologie_graph,
         dimensions=embedding_dimensions,
         num_walks=num_walks,
         walk_length=walk_length,
-        workers=_OPTIMAL_WORKERS,  # Automatisch: CPU-Kerne (max 8)
+        workers=_OPTIMAL_WORKERS,
+        dependencies=dependencies,  # NEU: Nutze Dependency-Gewichte
     )
 
     # 2. Query-Embedding berechnen

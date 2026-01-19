@@ -7,6 +7,7 @@ Diese Datei enthält alle Funktionen für die regelbasierte Similarity-Methode:
 - Parameter-weise Similarity-Berechnung
 - Gewichtete Gesamt-Similarity pro Kategorie
 - Top-k Ähnlichste Rotoren
+- Automatische Gewichtsberechnung aus Dependency-Constraints
 """
 
 from __future__ import annotations
@@ -16,6 +17,138 @@ import math
 
 from rotor_owl.config.kategorien import map_paramtype_to_kategorie, KATEGORIEN_3
 from rotor_owl.utils.math_utils import berechne_gewichtete_gesamt_similarity
+
+
+# ============================================================================
+# Automatische Gewichtsberechnung aus Dependencies
+# ============================================================================
+
+
+def berechne_automatische_gewichte(
+    dependencies: dict[tuple[str, str], dict], normalization: str = "sum"
+) -> dict[str, float]:
+    """
+    Berechnet Kategorie-Gewichte automatisch aus Dependency-Constraints.
+
+    Strategie:
+    - Für jede Komponente: Summiere alle incoming DependencyPercentages
+    - Komponenten mit hohen Dependencies bekommen höheres Gewicht
+    - Normalisiere auf Summe = 1.0
+
+    Args:
+        dependencies: Dict mit (source, target) -> {"strength": str, "percentage": float}
+        normalization: "sum" (Summe=1.0) oder "max" (Maximum=1.0)
+
+    Returns:
+        Dict mit Komponenten-Name -> Gewicht (0.0 - 1.0)
+    """
+    component_importance = defaultdict(float)
+
+    # Sammle Dependencies pro Komponente (incoming + outgoing)
+    for (source, target), dep_info in dependencies.items():
+        percentage = dep_info["percentage"]
+
+        # Target wird beeinflusst -> wichtig für Similarity
+        component_importance[target] += percentage
+
+        # Source beeinflusst andere -> auch wichtig (aber weniger)
+        component_importance[source] += percentage * 0.5
+
+    if not component_importance:
+        # Fallback: gleichmäßige Verteilung
+        return {
+            comp: 1.0 / 6
+            for comp in [
+                "Welle",
+                "Aktivteil",
+                "Blechpaket",
+                "Luefter",
+                "Welleende",
+                "Wuchtscheiben",
+            ]
+        }
+
+    # Normalisierung
+    if normalization == "sum":
+        total = sum(component_importance.values())
+        if total > 0:
+            return {comp: weight / total for comp, weight in component_importance.items()}
+    elif normalization == "max":
+        max_weight = max(component_importance.values())
+        if max_weight > 0:
+            return {comp: weight / max_weight for comp, weight in component_importance.items()}
+
+    return dict(component_importance)
+
+
+def map_komponenten_zu_kategorie_gewichte(
+    komponenten_gewichte: dict[str, float], features_by_rotor: dict[str, dict]
+) -> dict[str, float]:
+    """
+    Mappt Komponenten-Gewichte zu Kategorie-Gewichten (GEOM_MECH, MTRL_PROC, REQ_ELEC).
+
+    Strategie:
+    - Analysiere für jede Komponente, welche Parameter-Typen sie hat
+    - Verteile Komponenten-Gewicht proportional auf Kategorien
+    - Summiere für finale Kategorie-Gewichte
+
+    Args:
+        komponenten_gewichte: Dict mit Komponenten-Name -> Gewicht
+        features_by_rotor: Feature-Daten aller Rotoren
+
+    Returns:
+        Dict mit Kategorie -> Gewicht
+    """
+    from rotor_owl.config.kategorien import map_paramtype_to_kategorie, KATEGORIEN_3
+
+    # Zähle Parameter pro Komponente und Kategorie
+    komponente_kategorie_counts = defaultdict(lambda: defaultdict(int))
+
+    # Sample first rotor to get component structure
+    sample_rotor = next(iter(features_by_rotor.values()))
+
+    for (component, param), param_data in sample_rotor["params"].items():
+        ptype = param_data.get("ptype")
+        kategorie = map_paramtype_to_kategorie(ptype)
+        komponente_kategorie_counts[component][kategorie] += 1
+
+    # Berechne Kategorie-Gewichte
+    kategorie_gewichte = defaultdict(float)
+
+    for komponente, gewicht in komponenten_gewichte.items():
+        # Normalisiere Komponenten-Namen (Welle, Blechpaket, etc.)
+        komponente_normalized = komponente.lower().replace("_", "")
+
+        # Finde matching Komponente in counts
+        total_params = 0
+        komponente_verteilung = {}
+
+        for comp_key, kat_counts in komponente_kategorie_counts.items():
+            comp_key_normalized = comp_key.lower().replace("_", "")
+            if (
+                komponente_normalized in comp_key_normalized
+                or comp_key_normalized in komponente_normalized
+            ):
+                total_params = sum(kat_counts.values())
+                komponente_verteilung = kat_counts
+                break
+
+        if total_params > 0:
+            # Verteile Gewicht proportional auf Kategorien
+            for kategorie, count in komponente_verteilung.items():
+                kategorie_gewichte[kategorie] += gewicht * (count / total_params)
+        else:
+            # Fallback: Verteile gleichmäßig
+            for kat in KATEGORIEN_3:
+                kategorie_gewichte[kat] += gewicht / len(KATEGORIEN_3)
+
+    # Normalisierung auf Summe = 1.0
+    total = sum(kategorie_gewichte.values())
+    if total > 0:
+        return {kat: w / total for kat, w in kategorie_gewichte.items()}
+
+    # Fallback: Gleichverteilung
+    return {kat: 1.0 / len(KATEGORIEN_3) for kat in KATEGORIEN_3}
 
 
 # ============================================================================

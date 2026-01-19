@@ -7,12 +7,20 @@ import plotly.graph_objects as go
 from SPARQLWrapper import SPARQLWrapper, XML
 
 from rotor_owl.config.konfiguration import FUSEKI_ENDPOINT_STANDARD
-from rotor_owl.daten.feature_fetcher import fetch_all_features, build_numeric_stats
+from rotor_owl.daten.feature_fetcher import (
+    fetch_all_features,
+    build_numeric_stats,
+    fetch_component_dependencies,
+)
 from rotor_owl.methoden.pca_aehnlichkeit import (
     build_pca_embeddings,
     berechne_topk_aehnlichkeiten_pca,
 )
-from rotor_owl.methoden.regelbasierte_aehnlichkeit import berechne_topk_aehnlichkeiten
+from rotor_owl.methoden.regelbasierte_aehnlichkeit import (
+    berechne_topk_aehnlichkeiten,
+    berechne_automatische_gewichte,
+    map_komponenten_zu_kategorie_gewichte,
+)
 
 from rotor_owl.config.kategorien import (
     KAT_GEOM_MECH,
@@ -149,9 +157,21 @@ with st.sidebar:
     st.divider()
     st.subheader("Gewichte (3 Kategorien)")
 
-    gewicht_geom_mech = st.slider(KATEGORIE_LABEL[KAT_GEOM_MECH], 0.0, 5.0, 2.0, 0.1)
-    gewicht_mtrl_proc = st.slider(KATEGORIE_LABEL[KAT_MTRL_PROC], 0.0, 5.0, 1.0, 0.1)
-    gewicht_req_elec = st.slider(KATEGORIE_LABEL[KAT_REQ_ELEC], 0.0, 5.0, 0.5, 0.1)
+    auto_gewichte_aktiv = st.checkbox(
+        "🤖 Auto-Gewichte aus Dependencies",
+        value=False,
+        help="Berechne Kategorie-Gewichte automatisch aus Ontologie-Dependencies (hasStrength, hasDependencyPercentage)",
+    )
+
+    if auto_gewichte_aktiv:
+        st.info("Gewichte werden automatisch aus Dependency-Constraints berechnet")
+        gewicht_geom_mech = 0.0
+        gewicht_mtrl_proc = 0.0
+        gewicht_req_elec = 0.0
+    else:
+        gewicht_geom_mech = st.slider(KATEGORIE_LABEL[KAT_GEOM_MECH], 0.0, 5.0, 2.0, 0.1)
+        gewicht_mtrl_proc = st.slider(KATEGORIE_LABEL[KAT_MTRL_PROC], 0.0, 5.0, 1.0, 0.1)
+        gewicht_req_elec = st.slider(KATEGORIE_LABEL[KAT_REQ_ELEC], 0.0, 5.0, 0.5, 0.1)
 
     gewichtung_pro_kategorie = {
         KAT_GEOM_MECH: gewicht_geom_mech,
@@ -171,9 +191,31 @@ if daten_neuladen:
 try:
     with st.spinner("Lade Features aus Fuseki..."):
         features_by_rotor = fetch_all_features(endpoint_url)
+        dependencies = fetch_component_dependencies(endpoint_url)
 except Exception as fehler:
     st.error(f"Fuseki-Abfrage fehlgeschlagen: {fehler}")
     st.stop()
+
+
+# Auto-Gewichte berechnen wenn aktiviert
+if auto_gewichte_aktiv and dependencies:
+    komponenten_gewichte = berechne_automatische_gewichte(dependencies)
+    gewichtung_pro_kategorie = map_komponenten_zu_kategorie_gewichte(
+        komponenten_gewichte, features_by_rotor
+    )
+
+    st.sidebar.success(f"✓ Auto-Gewichte geladen ({len(komponenten_gewichte)} Komponenten)")
+
+    # Zeige Auto-Gewichte in Sidebar
+    with st.sidebar.expander("📊 Komponenten-Gewichte"):
+        for comp, weight in sorted(komponenten_gewichte.items(), key=lambda x: x[1], reverse=True):
+            st.write(f"{comp}: {weight:.3f}")
+
+    with st.sidebar.expander("📊 Kategorie-Gewichte (berechnet)"):
+        for kat, weight in sorted(
+            gewichtung_pro_kategorie.items(), key=lambda x: x[1], reverse=True
+        ):
+            st.write(f"{KATEGORIE_LABEL[kat]}: {weight:.3f}")
 
 
 rotor_ids = sorted(features_by_rotor.keys())
@@ -361,7 +403,7 @@ if starte_berechnung:
                 else:
                     ontologie_graph.parse(data=str(result_data), format="xml")
 
-        # Graph-Embeddings (Node2Vec)
+        # Graph-Embeddings (Node2Vec) mit gewichteten Kanten
         topk_ergebnisse = berechne_topk_aehnlichkeiten_graph_embedding(
             query_rotor_id=query_rotor_id,
             alle_rotor_ids=rotor_ids,
@@ -371,6 +413,7 @@ if starte_berechnung:
             num_walks=num_walks,
             walk_length=walk_length,
             k=top_k,
+            dependencies=dependencies if dependencies else None,  # NEU: Dependencies durchreichen
         )
 
     else:

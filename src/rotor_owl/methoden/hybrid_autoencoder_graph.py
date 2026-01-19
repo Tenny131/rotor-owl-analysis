@@ -6,11 +6,14 @@ für optimale Rotor-Vergleiche.
 
 WARUM k-NN statt Graph-Embeddings?
 - Alle Rotoren haben identische Graphstruktur (gleiche composed_of Beziehungen)
-- Graph-Embeddings zeigt nur 4.5% Range (zu schwach für Diskriminierung)
-- k-NN zeigt 41% Range (exzellente Diskriminierung)
-- Autoencoder (76% Range) und k-NN (41% Range) sind komplementär:
+- Graph-Embeddings zeigt nur 6.1% Range (zu schwach für Diskriminierung)
+- k-NN zeigt 54.7% Range (exzellente Diskriminierung)
+- Autoencoder (93.1% Range) und k-NN (54.7% Range) sind komplementär:
   * Autoencoder: Findet Pattern-basierte Ähnlichkeiten (gleiche Feature-Korrelationen)
   * k-NN: Findet Attribut-basierte Ähnlichkeiten (gleiche Absolutwerte)
+
+HINWEIS: Diese Datei heißt "hybrid_autoencoder_graph.py" aus historischen Gründen,
+verwendet aber k-NN statt Graph-Embeddings (siehe Begründung oben).
 """
 
 from __future__ import annotations
