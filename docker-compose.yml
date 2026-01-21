@@ -11,7 +11,10 @@ services:
       - fuseki-data:/fuseki
 
   app:
-    image: rotor-owl-app:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rotor-owl-analysis:latest
     container_name: rotor-streamlit
     ports:
       - "8501:8501"

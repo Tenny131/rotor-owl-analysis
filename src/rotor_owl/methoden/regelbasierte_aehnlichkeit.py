@@ -23,11 +23,22 @@ from rotor_owl.utils.math_utils import berechne_gewichtete_gesamt_similarity
 # Automatische Gewichtsberechnung aus Dependencies
 # ============================================================================
 
+# Stärke-Multiplikatoren für Dependency-Gewichtung
+STAERKE_MULTIPLIKATOR = {
+    "hoch": 1.5,
+    "mittel": 1.0,
+    "niedrig": 0.5,
+}
+
 
 def berechne_automatische_gewichte(
     dependencies: dict[tuple[str, str], dict], normalization: str = "sum"
 ) -> dict[str, float]:
     """Berechnet Komponenten-Gewichte aus Dependencies (incoming 100%, outgoing 50%).
+
+    Berücksichtigt sowohl percentage als auch strength:
+    - percentage: Basis-Gewicht der Dependency (0.0-1.0)
+    - strength: Multiplikator (hoch=1.5, mittel=1.0, niedrig=0.5)
 
     Args:
         dependencies: (source, target) -> {"strength": str, "percentage": float}
@@ -41,12 +52,17 @@ def berechne_automatische_gewichte(
     # Sammle Dependencies pro Komponente (incoming + outgoing)
     for (source, target), dep_info in dependencies.items():
         percentage = dep_info["percentage"]
+        strength = dep_info.get("strength", "mittel").lower()
+
+        # Stärke-Multiplikator anwenden
+        multiplikator = STAERKE_MULTIPLIKATOR.get(strength, 1.0)
+        gewichteter_wert = percentage * multiplikator
 
         # Target wird beeinflusst -> wichtig für Similarity
-        component_importance[target] += percentage
+        component_importance[target] += gewichteter_wert
 
         # Source beeinflusst andere -> auch wichtig (aber weniger)
-        component_importance[source] += percentage * 0.5
+        component_importance[source] += gewichteter_wert * 0.5
 
     if not component_importance:
         # Fallback: gleichmäßige Verteilung
@@ -299,9 +315,9 @@ def rotor_similarity(
     anzahl_pro_kategorie: dict[str, int] = {k: 0 for k in KATEGORIEN_3}
 
     # Pro Kategorie mitteln
-    for kat, parameter_keys in keys_pro_kategorie.items():
+    for kategorie, parameter_keys in keys_pro_kategorie.items():
         sim_summe = 0.0
-        cnt = 0
+        anzahl = 0
 
         for parameter_schluessel in parameter_keys:
             sim = value_similarity(
@@ -316,10 +332,10 @@ def rotor_similarity(
                 continue
 
             sim_summe += sim
-            cnt += 1
+            anzahl += 1
 
-        similarity_pro_kategorie[kat] = (sim_summe / cnt) if cnt > 0 else 0.0
-        anzahl_pro_kategorie[kat] = cnt
+        similarity_pro_kategorie[kategorie] = (sim_summe / anzahl) if anzahl > 0 else 0.0
+        anzahl_pro_kategorie[kategorie] = anzahl
 
     # Gewichtete Gesamt-Similarity (zentrale Funktion)
     gesamt_similarity = berechne_gewichtete_gesamt_similarity(
@@ -340,22 +356,21 @@ def berechne_topk_aehnlichkeiten(
     features_by_rotor: dict[str, dict],
     stats: dict[tuple[str, str], tuple[float, float]],
     gewichtung_pro_kategorie: dict[str, float],
-    k: int,
+    top_k: int,
 ) -> list[tuple[str, float, dict[str, float]]]:
     """
-    Methode A: Top-k nach regelbasierter Similarity
+    Methode A: Top-k nach regelbasierter Similarity.
 
     Args:
-        query_rotor_id: ID des Query-Rotors
-        rotor_ids: Liste aller Rotor-IDs
-        features_by_rotor: Feature-Daten aller Rotoren
-        stats: Min/Max-Statistik für numerische Parameter
-        gewichtung_pro_kategorie: Gewichtung pro Kategorie
-        k: Anzahl der Top-k Ergebnisse
+        query_rotor_id (str): ID des Query-Rotors
+        rotor_ids (list): Liste aller Rotor-IDs
+        features_by_rotor (dict): Feature-Daten aller Rotoren
+        stats (dict): Min/Max-Statistik für numerische Parameter
+        gewichtung_pro_kategorie (dict): Gewichtung pro Kategorie
+        top_k (int): Anzahl der Top-k Ergebnisse
 
     Returns:
-        Liste von Tupeln (rotor_id, gesamt_similarity, similarity_pro_kategorie)
-        sortiert nach Similarity (absteigend)
+        list: (rotor_id, gesamt_similarity, similarity_pro_kategorie), sortiert
     """
     ergebnisse: list[tuple[str, float, dict[str, float]]] = []
 
@@ -373,4 +388,4 @@ def berechne_topk_aehnlichkeiten(
         ergebnisse.append((ziel_rotor_id, gesamt_sim, sim_pro_kat))
 
     ergebnisse.sort(key=lambda x: x[1], reverse=True)
-    return ergebnisse[:k]
+    return ergebnisse[:top_k]

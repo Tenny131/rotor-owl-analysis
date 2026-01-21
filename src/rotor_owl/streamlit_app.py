@@ -44,17 +44,20 @@ from rotor_owl.methoden.autoencoder_aehnlichkeit import (
 # NEU: Custom K-Means (D)
 from rotor_owl.methoden.kmeans_aehnlichkeit import berechne_topk_aehnlichkeiten_kmeans
 
-# Hybrid
+# Hybrid (modular)
 from rotor_owl.methoden.hybrid_aehnlichkeit import berechne_topk_aehnlichkeiten_hybrid
 
 # Graph-Embeddings
 from rotor_owl.methoden.graph_embedding_aehnlichkeit import (
     berechne_topk_aehnlichkeiten_graph_embedding,
 )
-from rotor_owl.methoden.hybrid_autoencoder_graph import (
-    berechne_topk_aehnlichkeiten_hybrid_ae_graph,
-)
 from rdflib import Graph
+
+# Validation
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.metrics import silhouette_score
 
 
 # -------------------------------
@@ -69,6 +72,45 @@ with st.sidebar:
 
     endpoint_url = st.text_input("Fuseki SPARQL Endpoint", value=FUSEKI_ENDPOINT_STANDARD)
 
+    # Button zum Laden der Ontologie und Features (einmalig)
+    if st.button("📥 Daten laden", help="Lädt Ontologie-Graph und Features von Fuseki (einmalig)"):
+        with st.spinner("Lade Ontologie-Graph von Fuseki..."):
+            construct_query = """
+            CONSTRUCT { ?s ?p ?o }
+            WHERE { ?s ?p ?o }
+            LIMIT 100000
+            """
+            sparql = SPARQLWrapper(endpoint_url)
+            sparql.setQuery(construct_query)
+            sparql.setReturnFormat(XML)
+            result_data = sparql.query().convert()
+            if isinstance(result_data, Graph):
+                st.session_state["ontologie_graph"] = result_data
+            else:
+                ontologie_graph = Graph()
+                if isinstance(result_data, bytes):
+                    ontologie_graph.parse(data=result_data, format="xml")
+                else:
+                    ontologie_graph.parse(data=str(result_data), format="xml")
+                st.session_state["ontologie_graph"] = ontologie_graph
+            st.session_state["ontologie_geladen"] = True
+
+        with st.spinner("Lade Rotor-Features von Fuseki..."):
+            features_by_rotor = fetch_all_features(endpoint_url)
+            stats = build_numeric_stats(features_by_rotor)
+            st.session_state["features_by_rotor"] = features_by_rotor
+            st.session_state["numeric_stats"] = stats
+            st.session_state["daten_geladen"] = True
+
+        st.success(f"✅ Ontologie + {len(features_by_rotor)} Rotoren geladen!")
+
+    # Status anzeigen
+    if st.session_state.get("daten_geladen", False):
+        n_rotors = len(st.session_state.get("features_by_rotor", {}))
+        st.caption(f"🟢 Daten geladen ({n_rotors} Rotoren)")
+    else:
+        st.caption("🔴 Daten nicht geladen")
+
     st.divider()
     st.subheader("Methode")
 
@@ -81,66 +123,79 @@ with st.sidebar:
             "Autoencoder",
             "K-Means Clustering",
             "Graph-Embeddings (Node2Vec)",
-            "Hybrid-Methode (Autoencoder + Graph)",
+            "Hybrid-Methode",
         ],
         index=6,  # Hybrid-Methode als Standard
     )
 
-    # Latent Dimension für PCA / Autoencoder
-    latent_dim = 8
+    # Latent Dimension für PCA / Autoencoder (32 = bessere Varianz-Erhaltung)
+    latent_dim = 32
     if methode == "PCA-Embedding":
-        latent_dim = st.slider("PCA Latent Dimension", 2, 32, 8, 1)
+        latent_dim = st.slider("PCA Latent Dimension", 2, 64, 32, 1)
 
     if methode == "Autoencoder":
-        latent_dim = st.slider("Autoencoder Latent Dimension", 2, 32, 8, 1)
+        latent_dim = st.slider("Autoencoder Latent Dimension", 2, 64, 32, 1)
 
-    # K-Means: Anzahl Cluster
-    n_clusters = 5
+    # K-Means: Anzahl Cluster (8 = gute Balance für ~50 Rotoren)
+    n_clusters = 8
     if methode == "K-Means Clustering":
-        n_clusters = st.slider("K-Means Cluster (k)", 2, 30, 5, 1)
+        n_clusters = st.slider("K-Means Cluster (k)", 2, 30, 8, 1)
 
     # Graph-Embeddings: Embedding-Dimensionen
     embedding_dim = 32
-    num_walks = 3
-    walk_length = 20
-    if methode == "Graph-Embeddings (Node2Vec)":
-        embedding_dim = st.slider("Embedding-Dimension", 16, 128, 32, 16)
-        num_walks = st.slider("Anzahl Random Walks pro Knoten", 2, 10, 3, 1)
-        walk_length = st.slider("Walk-Länge", 10, 50, 20, 10)
+    num_walks = 1
+    walk_length = 10
 
-    # Hybrid-Methode: Gewichte
-    gewicht_autoencoder = 0.5
-    gewicht_graph = 0.5
-    if methode == "Hybrid-Methode (Autoencoder + Graph)":
-        st.caption("**Gewichtung**")
+    # Hybrid-Methode: Methoden-Auswahl und Gewichte
+    hybrid_methode_1 = "PCA-Embedding"
+    hybrid_methode_2 = "K-Means Clustering"
+    hybrid_gewicht_1 = 0.7
+    hybrid_gewicht_2 = 0.3
 
-        gewicht_autoencoder = st.slider(
-            "Autoencoder (Pattern-basiert)",
+    if methode == "Hybrid-Methode":
+        st.caption("**Hybrid-Konfiguration**")
+
+        verfuegbare_methoden = [
+            "Regelbasiert",
+            "k-Nearest Neighbors",
+            "PCA-Embedding",
+            "Autoencoder",
+            "K-Means Clustering",
+        ]
+
+        hybrid_methode_1 = st.selectbox(
+            "Methode 1",
+            options=verfuegbare_methoden,
+            index=2,  # PCA als Standard
+        )
+
+        hybrid_gewicht_1 = st.slider(
+            f"Gewicht {hybrid_methode_1}",
             0.0,
             1.0,
-            0.5,
+            0.7,
             0.05,
-            help="Gewicht für Pattern-basierte Ähnlichkeit (Feature-Korrelationen, globale Muster)",
         )
-        gewicht_graph = st.slider(
-            "k-NN (Attribut-basiert)",
+
+        hybrid_methode_2 = st.selectbox(
+            "Methode 2",
+            options=[m for m in verfuegbare_methoden if m != hybrid_methode_1],
+            index=3,  # K-Means als Standard (Index nach Filterung)
+        )
+
+        hybrid_gewicht_2 = st.slider(
+            f"Gewicht {hybrid_methode_2}",
             0.0,
             1.0,
-            0.5,
+            0.3,
             0.05,
-            help="Gewicht für Attribut-basierte Ähnlichkeit (Distanz zwischen Werten)",
         )
-        summe = gewicht_autoencoder + gewicht_graph
+
+        summe = hybrid_gewicht_1 + hybrid_gewicht_2
         if abs(summe - 1.0) > 0.01:
             st.warning(f"⚠️ Gewichte-Summe: {summe:.2f} (empfohlen: 1.0)")
         else:
             st.success(f"✓ Gewichte-Summe: {summe:.2f}")
-
-        # Parameter für Hybrid-Komponenten
-        latent_dim = st.slider("Autoencoder Latent Dimension", 2, 32, 8, 1)
-        embedding_dim = 32
-        num_walks = 3
-        walk_length = 20
 
     st.divider()
 
@@ -241,38 +296,20 @@ if starte_berechnung:
     # Stats für numerische Normierung
     stats = build_numeric_stats(features_by_rotor)
 
+    # Speichere in session_state für Validierungs-Button
+    st.session_state["features_by_rotor"] = features_by_rotor
+    st.session_state["numeric_stats"] = stats
+
     # Vergleich aller Methoden (für Analyse)
     if vergleich_aktiv:
-        # Setze alle Gewichte gleichmäßig
+        # Setze alle Gewichte gleichmäßig (5 Methoden ohne Graph-Embeddings)
         methoden_gewichte = {
-            "Regelbasiert": 1 / 6,
-            "k-Nearest Neighbors": 1 / 6,
-            "PCA-Embedding": 1 / 6,
-            "Autoencoder": 1 / 6,
-            "K-Means Clustering": 1 / 6,
-            "Graph-Embeddings (Node2Vec)": 1 / 6,
+            "Regelbasiert": 1 / 5,
+            "k-Nearest Neighbors": 1 / 5,
+            "PCA-Embedding": 1 / 5,
+            "Autoencoder": 1 / 5,
+            "K-Means Clustering": 1 / 5,
         }
-
-        # Lade Ontologie-Graph
-        with st.spinner("Lade Ontologie-Graph für Vergleich..."):
-            ontologie_graph = Graph()
-            construct_query = """
-            CONSTRUCT { ?s ?p ?o }
-            WHERE { ?s ?p ?o }
-            LIMIT 5000
-            """
-            sparql = SPARQLWrapper(endpoint_url)
-            sparql.setQuery(construct_query)
-            sparql.setReturnFormat(XML)
-            result_data = sparql.query().convert()
-            if isinstance(result_data, Graph):
-                ontologie_graph = result_data
-            else:
-                ontologie_graph = Graph()
-                if isinstance(result_data, bytes):
-                    ontologie_graph.parse(data=result_data, format="xml")
-                else:
-                    ontologie_graph.parse(data=str(result_data), format="xml")
 
         topk_ergebnisse = berechne_topk_aehnlichkeiten_hybrid(
             query_rotor_id=query_rotor_id,
@@ -283,50 +320,26 @@ if starte_berechnung:
             methoden_gewichte=methoden_gewichte,
             latent_dim=latent_dim,
             n_clusters=n_clusters,
-            k=top_k,
-            ontologie_graph=ontologie_graph,
-            embedding_dim=embedding_dim,
-            num_walks=num_walks,
-            walk_length=walk_length,
+            top_k=top_k,
         )
 
-    elif methode == "Hybrid-Methode (Autoencoder + Graph)":
-        # Lade Ontologie-Graph
-        with st.spinner("Lade Ontologie-Graph für Hybrid-Methode..."):
-            ontologie_graph = Graph()
-            construct_query = """
-            CONSTRUCT { ?s ?p ?o }
-            WHERE { ?s ?p ?o }
-            LIMIT 5000
-            """
-            sparql = SPARQLWrapper(endpoint_url)
-            sparql.setQuery(construct_query)
-            sparql.setReturnFormat(XML)
-            result_data = sparql.query().convert()
-            if isinstance(result_data, Graph):
-                ontologie_graph = result_data
-            else:
-                ontologie_graph = Graph()
-                if isinstance(result_data, bytes):
-                    ontologie_graph.parse(data=result_data, format="xml")
-                else:
-                    ontologie_graph.parse(data=str(result_data), format="xml")
+    elif methode == "Hybrid-Methode":
+        # Modulare Hybrid-Methode mit ausgewählten Methoden
+        methoden_gewichte = {
+            hybrid_methode_1: hybrid_gewicht_1,
+            hybrid_methode_2: hybrid_gewicht_2,
+        }
 
-        # Hybrid-Methode: Autoencoder + Graph-Embeddings
-        topk_ergebnisse = berechne_topk_aehnlichkeiten_hybrid_ae_graph(
+        topk_ergebnisse = berechne_topk_aehnlichkeiten_hybrid(
             query_rotor_id=query_rotor_id,
             rotor_ids=rotor_ids,
             features_by_rotor=features_by_rotor,
             stats=stats,
-            ontologie_graph=ontologie_graph,
             gewichtung_pro_kategorie=gewichtung_pro_kategorie,
-            gewicht_autoencoder=gewicht_autoencoder,
-            gewicht_graph=gewicht_graph,
+            methoden_gewichte=methoden_gewichte,
             latent_dim=latent_dim,
-            embedding_dim=embedding_dim,
-            num_walks=num_walks,
-            walk_length=walk_length,
-            k=top_k,
+            n_clusters=n_clusters,
+            top_k=top_k,
         )
 
     elif methode == "Regelbasiert":
@@ -337,7 +350,7 @@ if starte_berechnung:
             features_by_rotor=features_by_rotor,
             stats=stats,
             gewichtung_pro_kategorie=gewichtung_pro_kategorie,
-            k=top_k,
+            top_k=top_k,
         )
 
     elif methode == "k-Nearest Neighbors":
@@ -349,7 +362,7 @@ if starte_berechnung:
             rotor_ids=rotor_ids,
             embeddings=embeddings,
             gewichtung_pro_kategorie=gewichtung_pro_kategorie,
-            k=top_k,
+            top_k=top_k,
         )
 
     elif methode == "Autoencoder":
@@ -365,7 +378,7 @@ if starte_berechnung:
             rotor_ids=rotor_ids,
             embeddings=ae_embeddings,
             gewichtung_pro_kategorie=gewichtung_pro_kategorie,
-            k=top_k,
+            top_k=top_k,
         )
 
     elif methode == "K-Means Clustering":
@@ -377,31 +390,35 @@ if starte_berechnung:
             stats=stats,
             gewichtung_pro_kategorie=gewichtung_pro_kategorie,
             n_clusters=n_clusters,
-            k=top_k,
+            top_k=top_k,
         )
 
     elif methode == "Graph-Embeddings (Node2Vec)":
-        # Lade RDF-Graph von Fuseki
-        with st.spinner("Lade Ontologie-Graph von Fuseki..."):
-            construct_query = """
-            CONSTRUCT { ?s ?p ?o }
-            WHERE { ?s ?p ?o }
-            LIMIT 5000
-            """
-            sparql = SPARQLWrapper(endpoint_url)
-            sparql.setQuery(construct_query)
-            sparql.setReturnFormat(XML)
-            result_data = sparql.query().convert()
-            # SPARQLWrapper with XML returns rdflib.Graph directly
-            if isinstance(result_data, Graph):
-                ontologie_graph = result_data
-            else:
-                # Fallback: parse if it's bytes/string
-                ontologie_graph = Graph()
-                if isinstance(result_data, bytes):
-                    ontologie_graph.parse(data=result_data, format="xml")
+        # Nutze bereits geladene Ontologie oder lade neu
+        if st.session_state.get("ontologie_geladen", False):
+            ontologie_graph = st.session_state["ontologie_graph"]
+        else:
+            with st.spinner("Lade Ontologie-Graph von Fuseki..."):
+                construct_query = """
+                CONSTRUCT { ?s ?p ?o }
+                WHERE { ?s ?p ?o }
+                LIMIT 100000
+                """
+                sparql = SPARQLWrapper(endpoint_url)
+                sparql.setQuery(construct_query)
+                sparql.setReturnFormat(XML)
+                result_data = sparql.query().convert()
+                if isinstance(result_data, Graph):
+                    ontologie_graph = result_data
                 else:
-                    ontologie_graph.parse(data=str(result_data), format="xml")
+                    ontologie_graph = Graph()
+                    if isinstance(result_data, bytes):
+                        ontologie_graph.parse(data=result_data, format="xml")
+                    else:
+                        ontologie_graph.parse(data=str(result_data), format="xml")
+
+                st.session_state["ontologie_graph"] = ontologie_graph
+                st.session_state["ontologie_geladen"] = True
 
         # Graph-Embeddings (Node2Vec) mit gewichteten Kanten
         topk_ergebnisse = berechne_topk_aehnlichkeiten_graph_embedding(
@@ -412,8 +429,8 @@ if starte_berechnung:
             embedding_dimensions=embedding_dim,
             num_walks=num_walks,
             walk_length=walk_length,
-            k=top_k,
-            dependencies=dependencies if dependencies else None,  # NEU: Dependencies durchreichen
+            top_k=top_k,
+            dependencies=dependencies if dependencies else None,
         )
 
     else:
@@ -429,7 +446,7 @@ if starte_berechnung:
             rotor_ids=rotor_ids,
             embeddings=pca_embeddings,
             gewichtung_pro_kategorie=gewichtung_pro_kategorie,
-            k=top_k,
+            top_k=top_k,
         )
 
     laufzeit = time.perf_counter() - startzeit
@@ -439,9 +456,9 @@ if starte_berechnung:
         st.caption(
             f"Vergleich aller Methoden berechnet in {laufzeit:.3f} s | Vergleiche: {len(rotor_ids) - 1}"
         )
-    elif methode == "Hybrid-Methode (Autoencoder + Graph)":
+    elif methode == "Hybrid-Methode":
         st.caption(
-            f"Hybrid-Methode ({gewicht_autoencoder:.0%} Autoencoder + {gewicht_graph:.0%} k-NN) berechnet in {laufzeit:.3f} s | Vergleiche: {len(rotor_ids) - 1}"
+            f"Hybrid ({hybrid_gewicht_1:.0%} {hybrid_methode_1} + {hybrid_gewicht_2:.0%} {hybrid_methode_2}) berechnet in {laufzeit:.3f} s | Vergleiche: {len(rotor_ids) - 1}"
         )
     else:
         st.caption(f"Similarity berechnet in {laufzeit:.3f} s | Vergleiche: {len(rotor_ids) - 1}")
@@ -450,18 +467,13 @@ if starte_berechnung:
     tabellen_zeilen = []
 
     if vergleich_aktiv or (
-        methode == "Hybrid-Methode (Autoencoder + Graph)"
-        and len(topk_ergebnisse) > 0
-        and len(topk_ergebnisse[0]) == 4
+        methode == "Hybrid-Methode" and len(topk_ergebnisse) > 0 and len(topk_ergebnisse[0]) == 4
     ):
         # Hybrid/Vergleich-Modus: Zeige Similarity pro Methode
         for item in topk_ergebnisse:
             if len(item) == 4:  # Hybrid gibt 4 Elemente zurück
                 rotor_id, sim_total, _, similarity_pro_methode = item
                 zeile: dict[str, str | float] = {"Rotor": rotor_id}
-
-                # DEBUG: Zeige verfügbare Keys
-                # st.write(f"DEBUG {rotor_id}: {list(similarity_pro_methode.keys())}")
 
                 # Spalten für jede Methode
                 if vergleich_aktiv:
@@ -472,20 +484,19 @@ if starte_berechnung:
                         "PCA": "PCA-Embedding",
                         "Autoencoder": "Autoencoder",
                         "K-Means": "K-Means Clustering",
-                        "Graph-Embed": "Graph-Embeddings (Node2Vec)",
                     }
                     for display_name, key_name in methoden_mapping.items():
                         zeile[display_name] = float(
                             f"{similarity_pro_methode.get(key_name, 0.0):.4f}"
                         )
                 else:
-                    # Hybrid-Methode: Nur 2 Methoden
-                    zeile["Autoencoder"] = float(
-                        f"{similarity_pro_methode.get('Autoencoder', 0.0):.4f}"
+                    # Hybrid-Methode: Dynamisch die ausgewählten Methoden anzeigen
+                    zeile[hybrid_methode_1] = float(
+                        f"{similarity_pro_methode.get(hybrid_methode_1, 0.0):.4f}"
                     )
-                    zeile["k-NN"] = float(
-                        f"{similarity_pro_methode.get('k-NN', similarity_pro_methode.get('Graph-Embeddings', 0.0)):.4f}"
-                    )  # Fallback für alte Daten
+                    zeile[hybrid_methode_2] = float(
+                        f"{similarity_pro_methode.get(hybrid_methode_2, 0.0):.4f}"
+                    )
 
                 zeile["S_ges"] = float(f"{sim_total:.4f}")
                 tabellen_zeilen.append(zeile)
@@ -511,9 +522,7 @@ if starte_berechnung:
 
     # Heatmap: Methoden-Ähnlichkeit (Hybrid/Vergleich) oder Kategorie-Ähnlichkeit (Standard)
     if vergleich_aktiv or (
-        methode == "Hybrid-Methode (Autoencoder + Graph)"
-        and len(topk_ergebnisse) > 0
-        and len(topk_ergebnisse[0]) == 4
+        methode == "Hybrid-Methode" and len(topk_ergebnisse) > 0 and len(topk_ergebnisse[0]) == 4
     ):
         st.subheader("📊 Methoden-Ähnlichkeit Heatmap")
 
@@ -525,21 +534,19 @@ if starte_berechnung:
                 "PCA-Embedding",
                 "Autoencoder",
                 "K-Means Clustering",
-                "Graph-Embeddings (Node2Vec)",
             ]
             methoden_labels = [
                 m.replace("-Nearest Neighbors", "-NN")
                 .replace("-Embedding", "")
                 .replace(" Clustering", "")
-                .replace(" (Node2Vec)", "")
                 for m in aktive_methoden
             ]
         else:
-            # Hybrid-Methode
-            aktive_methoden = ["Autoencoder", "k-NN"]
+            # Hybrid-Methode: Dynamisch die ausgewählten Methoden anzeigen
+            aktive_methoden = [hybrid_methode_1, hybrid_methode_2]
             methoden_labels = [
-                f"Autoencoder (w={gewicht_autoencoder:.2f})",
-                f"k-NN (w={gewicht_graph:.2f})",
+                f"{hybrid_methode_1} (w={hybrid_gewicht_1:.2f})",
+                f"{hybrid_methode_2} (w={hybrid_gewicht_2:.2f})",
             ]
 
         rotor_labels = [item[0] for item in topk_ergebnisse]
@@ -672,40 +679,360 @@ else:
 st.divider()
 st.header("📊 Methoden-Validierung")
 
-with st.expander(
-    "ℹ️ **Validierung der Ähnlichkeitsmethoden** (ohne Expertenmeinungen)", expanded=False
-):
-    st.markdown("""
-    Diese Analyse vergleicht die drei Ähnlichkeitsmethoden **k-NN**, **Autoencoder** und **Graph-Embeddings** 
-    anhand von 5 statistischen Tests:
-    
-    **Ergebnisse:**
-    
-    - ✅ k-NN: Range = 54.7%, CV = 11.2% → EXZELLENT (beste Diskriminierung)
-    - ✅ Autoencoder: Range = 93.1%, CV = 142.2% → EXZELLENT (findet andere Muster)
-    - ⚠️ Graph-Embeddings: Range = 6.1%, CV = 0.8% → SCHWACH (identische Struktur)
-    
-    **Hybridischer Ansatz (Autoencoder + k-NN):**
-    
-    - k-NN fokussiert auf direkte Attribut-Ähnlichkeit
-    - Autoencoder findet latente Muster (nicht-lineare Beziehungen)
-    - Beide Methoden sind komplementär → zusammen decken sie mehr Ähnlichkeitsaspekte ab
-    
-    **Graph-Embeddings wurde ersetzt:**
-    
-    Da alle Rotoren die gleiche Struktur haben (identischer Graph), kann Graph-Embeddings keine 
-    sinnvollen Unterschiede erkennen (nur 6% Range).
-    """)
+# Button fuer Live-Validierung mit vollstaendigen Matrizen
+if st.button("🔬 Vollständige Matrix-Validierung (alle Rotor-Paare)", type="secondary"):
+    if "features_by_rotor" not in st.session_state:
+        st.error("Bitte zuerst auf **📥 Daten laden** in der Sidebar klicken")
+    else:
+        with st.spinner("Berechne vollständige Similarity-Matrizen für alle Methoden..."):
+            features_by_rotor = st.session_state["features_by_rotor"]
+            numeric_stats = st.session_state["numeric_stats"]
+            rotor_ids = sorted(features_by_rotor.keys())
+            n_rotors = len(rotor_ids)
 
-    # Validierungsbild anzeigen
+            st.info(
+                f"📊 Berechne {n_rotors}×{n_rotors} = {n_rotors**2} Similarity-Werte für jede Methode..."
+            )
+
+            # Nutze UI-Einstellungen für Validierung
+            val_gewichte = gewichtung_pro_kategorie
+            val_latent_dim = latent_dim
+            val_n_clusters = n_clusters
+
+            # Container für vollständige Matrizen
+            similarity_matrices = {}
+
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            # 1. REGELBASIERT - Vollständige Matrix
+            status_text.text(f"1/6: Regelbasiert (0/{n_rotors} Rotoren)...")
+            regelbasiert_matrix = np.ones((n_rotors, n_rotors))
+            for i, query_r in enumerate(rotor_ids):
+                ergebnisse = berechne_topk_aehnlichkeiten(
+                    query_r,
+                    rotor_ids,
+                    features_by_rotor,
+                    numeric_stats,
+                    val_gewichte,
+                    top_k=len(rotor_ids),
+                )
+                for rotor_id, sim, _ in ergebnisse:
+                    j = rotor_ids.index(rotor_id)
+                    regelbasiert_matrix[i, j] = sim
+                if i % 10 == 0:
+                    status_text.text(f"1/6: Regelbasiert ({i}/{n_rotors} Rotoren)...")
+            similarity_matrices["Regelbasiert"] = regelbasiert_matrix
+            progress_bar.progress(1 / 6)
+
+            # 2. k-NN - Vollständige Matrix
+            status_text.text(f"2/6: k-NN (0/{n_rotors} Rotoren)...")
+            knn_emb = build_knn_embeddings(features_by_rotor, numeric_stats)
+            knn_matrix = np.ones((n_rotors, n_rotors))
+            for i, query_r in enumerate(rotor_ids):
+                ergebnisse = berechne_topk_aehnlichkeiten_knn(
+                    query_r, rotor_ids, knn_emb, val_gewichte, top_k=len(rotor_ids)
+                )
+                for item in ergebnisse:
+                    rotor_id, sim = item[0], item[1]
+                    j = rotor_ids.index(rotor_id)
+                    knn_matrix[i, j] = sim
+                if i % 10 == 0:
+                    status_text.text(f"2/6: k-NN ({i}/{n_rotors} Rotoren)...")
+            similarity_matrices["k-NN"] = knn_matrix
+            progress_bar.progress(2 / 6)
+
+            # 3. PCA - Vollständige Matrix
+            status_text.text(f"3/6: PCA (0/{n_rotors} Rotoren)...")
+            pca_emb = build_pca_embeddings(
+                features_by_rotor, numeric_stats, latent_dim=val_latent_dim
+            )
+            pca_matrix = np.ones((n_rotors, n_rotors))
+            for i, query_r in enumerate(rotor_ids):
+                ergebnisse = berechne_topk_aehnlichkeiten_pca(
+                    query_r, rotor_ids, pca_emb, val_gewichte, top_k=len(rotor_ids)
+                )
+                for item in ergebnisse:
+                    rotor_id, sim = item[0], item[1]
+                    j = rotor_ids.index(rotor_id)
+                    pca_matrix[i, j] = sim
+                if i % 10 == 0:
+                    status_text.text(f"3/6: PCA ({i}/{n_rotors} Rotoren)...")
+            similarity_matrices["PCA"] = pca_matrix
+            progress_bar.progress(3 / 6)
+
+            # 4. Autoencoder - Vollständige Matrix
+            status_text.text(f"4/6: Autoencoder (0/{n_rotors} Rotoren)...")
+            ae_emb = build_autoencoder_embeddings(
+                features_by_rotor, numeric_stats, latent_dim=val_latent_dim
+            )
+            ae_matrix = np.ones((n_rotors, n_rotors))
+            for i, query_r in enumerate(rotor_ids):
+                ergebnisse = berechne_topk_aehnlichkeiten_autoencoder(
+                    query_r, rotor_ids, ae_emb, val_gewichte, top_k=len(rotor_ids)
+                )
+                for item in ergebnisse:
+                    rotor_id, sim = item[0], item[1]
+                    j = rotor_ids.index(rotor_id)
+                    ae_matrix[i, j] = sim
+                if i % 10 == 0:
+                    status_text.text(f"4/6: Autoencoder ({i}/{n_rotors} Rotoren)...")
+            similarity_matrices["Autoencoder"] = ae_matrix
+            progress_bar.progress(4 / 6)
+
+            # 5. K-Means - Vollständige Matrix
+            status_text.text(f"5/6: K-Means (0/{n_rotors} Rotoren)...")
+            kmeans_matrix = np.ones((n_rotors, n_rotors))
+            for i, query_r in enumerate(rotor_ids):
+                ergebnisse = berechne_topk_aehnlichkeiten_kmeans(
+                    query_r,
+                    rotor_ids,
+                    features_by_rotor,
+                    numeric_stats,
+                    val_gewichte,
+                    n_clusters=val_n_clusters,
+                    top_k=len(rotor_ids),
+                )
+                for item in ergebnisse:
+                    rotor_id, sim = item[0], item[1]
+                    j = rotor_ids.index(rotor_id)
+                    kmeans_matrix[i, j] = sim
+                if i % 10 == 0:
+                    status_text.text(f"5/6: K-Means ({i}/{n_rotors} Rotoren)...")
+            similarity_matrices["K-Means"] = kmeans_matrix
+            progress_bar.progress(5 / 6)
+
+            # 6. Hybrid - verwendet die UI-Einstellungen (hybrid_methode_1 + hybrid_methode_2)
+            # Mapping von UI-Namen zu Matrix-Keys
+            methoden_matrix_mapping = {
+                "Regelbasiert": "Regelbasiert",
+                "k-Nearest Neighbors": "k-NN",
+                "PCA-Embedding": "PCA",
+                "Autoencoder": "Autoencoder",
+                "K-Means Clustering": "K-Means",
+            }
+
+            matrix_key_1 = methoden_matrix_mapping.get(hybrid_methode_1, "PCA")
+            matrix_key_2 = methoden_matrix_mapping.get(hybrid_methode_2, "K-Means")
+
+            status_text.text(
+                f"6/6: Hybrid ({hybrid_gewicht_1:.0%} {matrix_key_1} + {hybrid_gewicht_2:.0%} {matrix_key_2})..."
+            )
+
+            # Berechne gewichtete Kombination der ausgewählten Matrizen
+            matrix_1 = similarity_matrices.get(matrix_key_1, pca_matrix)
+            matrix_2 = similarity_matrices.get(matrix_key_2, kmeans_matrix)
+            hybrid_matrix = hybrid_gewicht_1 * matrix_1 + hybrid_gewicht_2 * matrix_2
+
+            similarity_matrices["Hybrid"] = hybrid_matrix
+            progress_bar.progress(6 / 6)
+
+            status_text.text("Analysiere Matrizen...")
+
+            # Berechne Metriken für jede Methode
+            validation_results = {}
+
+            for method_name, sim_matrix in similarity_matrices.items():
+                # Extrahiere obere Dreiecks-Matrix (ohne Diagonale) für echte Similarities
+                triu_indices = np.triu_indices_from(sim_matrix, k=1)
+                sim_values = sim_matrix[triu_indices]
+
+                validation_results[method_name] = {
+                    "mean": float(np.mean(sim_values)),
+                    "std": float(np.std(sim_values)),
+                    "min": float(np.min(sim_values)),
+                    "max": float(np.max(sim_values)),
+                    "range": float(np.max(sim_values) - np.min(sim_values)),
+                    "cv": float(np.std(sim_values) / np.mean(sim_values))
+                    if np.mean(sim_values) > 0
+                    else 0,
+                }
+
+                # Silhouette Score
+                try:
+                    dist_matrix = np.clip(1 - sim_matrix, 0, 1)
+                    np.fill_diagonal(dist_matrix, 0)
+
+                    if n_rotors > 5:
+                        clustering = AgglomerativeClustering(
+                            n_clusters=5, metric="precomputed", linkage="average"
+                        )
+                        labels = clustering.fit_predict(dist_matrix)
+                        sil_score = silhouette_score(dist_matrix, labels, metric="precomputed")
+                        validation_results[method_name]["silhouette"] = float(sil_score)
+                    else:
+                        validation_results[method_name]["silhouette"] = 0.0
+                except Exception:
+                    validation_results[method_name]["silhouette"] = 0.0
+
+            progress_bar.empty()
+            status_text.empty()
+
+            # Erstelle Visualisierung
+            methods = list(validation_results.keys())
+            colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#e377c2"]
+
+            fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+            fig.suptitle(
+                f"Matrix-Validierung ({n_rotors} Rotoren, {n_rotors*(n_rotors-1)//2} Paare) - 6 Methoden",
+                fontsize=14,
+                fontweight="bold",
+            )
+
+            # Plot 1: Histogramme
+            ax = axes[0, 0]
+            for i, method in enumerate(methods):
+                sim_matrix = similarity_matrices[method]
+                triu_indices = np.triu_indices_from(sim_matrix, k=1)
+                sim_vals = sim_matrix[triu_indices]
+                ax.hist(sim_vals, bins=30, alpha=0.5, label=method, color=colors[i % len(colors)])
+            ax.set_xlabel("Similarity")
+            ax.set_ylabel("Häufigkeit")
+            ax.set_title("Similarity Verteilungen (alle Paare)")
+            ax.legend(fontsize=7)
+            ax.grid(True, alpha=0.3)
+
+            # Plot 2: Range
+            ax = axes[0, 1]
+            ranges = [validation_results[m]["range"] * 100 for m in methods]
+            bars = ax.bar(
+                methods, ranges, color=colors[: len(methods)], alpha=0.8, edgecolor="black"
+            )
+            ax.set_ylabel("Range (%)")
+            ax.set_title("Range (Höher = Besser)")
+            ax.tick_params(axis="x", rotation=45, labelsize=8)
+            ax.grid(True, alpha=0.3, axis="y")
+            for bar, val in zip(bars, ranges):
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 1,
+                    f"{val:.1f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=7,
+                    fontweight="bold",
+                )
+
+            # Plot 3: CV
+            ax = axes[0, 2]
+            cvs = [validation_results[m]["cv"] * 100 for m in methods]
+            bars = ax.bar(methods, cvs, color=colors[: len(methods)], alpha=0.8, edgecolor="black")
+            ax.set_ylabel("CV (%)")
+            ax.set_title("Variationskoeffizient (Höher = Besser)")
+            ax.tick_params(axis="x", rotation=45, labelsize=8)
+            ax.grid(True, alpha=0.3, axis="y")
+            for bar, val in zip(bars, cvs):
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 0.5,
+                    f"{val:.1f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=7,
+                    fontweight="bold",
+                )
+
+            # Plot 4: Silhouette
+            ax = axes[1, 0]
+            sils = [validation_results[m]["silhouette"] for m in methods]
+            bars = ax.bar(methods, sils, color=colors[: len(methods)], alpha=0.8, edgecolor="black")
+            ax.set_ylabel("Silhouette Score")
+            ax.set_title("Cluster-Qualität (Höher = Besser)")
+            ax.tick_params(axis="x", rotation=45, labelsize=8)
+            ax.grid(True, alpha=0.3, axis="y")
+            for bar, val in zip(bars, sils):
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 0.01,
+                    f"{val:.2f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=7,
+                    fontweight="bold",
+                )
+
+            # Plot 5: Min/Mean/Max
+            ax = axes[1, 1]
+            x = np.arange(len(methods))
+            width = 0.25
+            mins = [validation_results[m]["min"] for m in methods]
+            means = [validation_results[m]["mean"] for m in methods]
+            maxs = [validation_results[m]["max"] for m in methods]
+            ax.bar(x - width, mins, width, label="Min", color="lightcoral", edgecolor="black")
+            ax.bar(x, means, width, label="Mean", color="steelblue", edgecolor="black")
+            ax.bar(x + width, maxs, width, label="Max", color="lightgreen", edgecolor="black")
+            ax.set_xticks(x)
+            ax.set_xticklabels(methods, rotation=45, ha="right", fontsize=7)
+            ax.set_ylabel("Similarity")
+            ax.set_title("Min / Mean / Max")
+            ax.legend(fontsize=7)
+            ax.grid(True, alpha=0.3, axis="y")
+            ax.set_ylim(0, 1.05)
+
+            # Plot 6: Tabelle
+            ax = axes[1, 2]
+            ax.axis("off")
+            table_data = []
+            for m in methods:
+                r = validation_results[m]
+                table_data.append(
+                    [m, f"{r['range']*100:.1f}%", f"{r['cv']*100:.1f}%", f"{r['silhouette']:.3f}"]
+                )
+            table = ax.table(
+                cellText=table_data,
+                colLabels=["Methode", "Range", "CV", "Silh."],
+                loc="center",
+                cellLoc="center",
+            )
+            table.auto_set_font_size(False)
+            table.set_fontsize(9)
+            table.scale(1.2, 1.8)
+            ax.set_title("Zusammenfassung", fontweight="bold", pad=20)
+
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close()
+
+            # Beste Methoden
+            best_range = max(validation_results.items(), key=lambda x: x[1]["range"])
+            best_cv = max(validation_results.items(), key=lambda x: x[1]["cv"])
+            best_sil = max(validation_results.items(), key=lambda x: x[1]["silhouette"])
+
+            st.success(f"""
+            **Ergebnis der vollständigen Matrix-Validierung:**
+            
+            📊 **Datenbasis:** {n_rotors} Rotoren, {n_rotors*(n_rotors-1)//2} unique Rotor-Paare
+            
+            - 🏆 **Beste Trennschärfe (Range):** {best_range[0]} ({best_range[1]['range']*100:.1f}%)
+            - 📈 **Höchste Variabilität (CV):** {best_cv[0]} ({best_cv[1]['cv']*100:.1f}%)
+            - ⭐ **Beste Cluster-Qualität (Silhouette):** {best_sil[0]} ({best_sil[1]['silhouette']:.3f})
+            """)
+
+            # Zeige Details als Dataframe
+            df_results = pd.DataFrame(
+                [
+                    {
+                        "Methode": m,
+                        "Range (%)": f"{r['range']*100:.1f}",
+                        "CV (%)": f"{r['cv']*100:.1f}",
+                        "Silhouette": f"{r['silhouette']:.3f}",
+                        "Min": f"{r['min']:.3f}",
+                        "Mean": f"{r['mean']:.3f}",
+                        "Max": f"{r['max']:.3f}",
+                    }
+                    for m, r in validation_results.items()
+                ]
+            )
+
+            st.dataframe(df_results, width="stretch", hide_index=True)
+
+with st.expander("📈 Vorberechnete Validierung (aus validate_results.py)", expanded=False):
     from pathlib import Path
 
     validation_img = Path(__file__).parent.parent.parent / "data" / "similarity_validation.png"
     if validation_img.exists():
         st.image(
-            str(validation_img),
-            caption="Similarity Validation - Vergleich aller Methoden",
-            width="stretch",
+            str(validation_img), caption="Similarity Validation - Alle 7 Methoden", width="stretch"
         )
     else:
-        st.warning("Validierungsbild nicht gefunden. Führe `python validate_similarities.py` aus.")
+        st.warning("Validierungsbild nicht gefunden. Fuehre `python validate_results.py` aus.")

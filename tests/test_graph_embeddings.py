@@ -109,7 +109,7 @@ def test_similarity_not_always_zero_point_five():
         embedding_dimensions=16,
         num_walks=3,
         walk_length=10,
-        k=2,
+        top_k=2,
     )
 
     # Mindestens eine Similarity sollte NICHT 0.5 sein

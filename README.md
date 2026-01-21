@@ -96,8 +96,9 @@ Erzeugt `data/generated/generated.csv` mit synthetischen Rotor-Parametern.
 
 ```powershell
 # Virtual Environment aktivieren
-python -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
+python.exe -m pip install --upgrade pip
 pip install -e .
 
 # Ontologie erstellen
@@ -132,50 +133,5 @@ Endpoint konfigurieren in `src/rotor_owl/konfiguration.py`:
 ```python
 FUSEKI_ENDPOINT_STANDARD = "http://localhost:3030/rotors/sparql"
 ```
-
----
-
-## 🔬 Validierung der Similarity-Methoden
-
-### Problem
-
-Graph-Embeddings zeigen nur 4.5% Range bei identischer Rotor-Struktur.
-Alle Rotoren haben gleiche RDF-Struktur (nur Parameter-Werte unterschiedlich).
-
-### Lösung
-
-Validierung ohne Expertenmeinungen durch 5 statistische Tests:
-
-1. Physikalische Plausibilität (Korrelation mit Leistung/Geometrie)
-2. Silhouette Score (Cluster-Qualität)
-3. Extreme Cases (identische vs. maximale Unterschiede)
-4. Spread-Analyse (Range, Coefficient of Variation)
-5. Bootstrap Stability (Rankings-Konsistenz)
-
-### Validierung ausführen
-
-```powershell
-python validate_similarities.py
-```
-
-Erzeugt:
-* `data/similarity_validation.png` (Visualisierung)
-* `data/similarity_validation.pdf` (Vektor-Format)
-* `temp/similarity_*.csv` (Rohdaten mit Timestamp)
-
-### Ergebnisse
-
-| Methode | Range | CV | Kendall-Tau | Bewertung |
-|---------|-------|----|----|-------|
-| k-NN | 54.7% | 11.2% | 1.0 | Exzellent |
-| Autoencoder | 93.1% | 142.2% | 1.0 | Exzellent |
-| Graph-Embeddings | 6.1% | 0.8% | 0.99 | Schlecht |
-
-Interpretation:
-* k-NN und Autoencoder sind komplementär (verschiedene Feature-Spaces)
-* Graph-Embeddings ungeeignet bei identischer Struktur
-* Hybrid-Methode nutzt 50% Autoencoder + 50% k-NN (Graph ersetzt)
-
-Validierungsergebnisse sind im Streamlit-UI unten eingeblendet (expandierbar).
 
 ---

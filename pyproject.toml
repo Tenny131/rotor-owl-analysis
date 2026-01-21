@@ -13,6 +13,7 @@ dependencies = [
     "plotly",
     "networkx",
     "gensim",
+    "matplotlib",
 ]
 
 [project.scripts]

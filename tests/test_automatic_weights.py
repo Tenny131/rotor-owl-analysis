@@ -25,21 +25,51 @@ def test_berechne_automatische_gewichte_normalization():
 
 
 def test_berechne_automatische_gewichte_incoming_outgoing():
-    """Prüft dass incoming 100% und outgoing 50% Gewicht bekommen."""
+    """Prüft dass incoming 100% und outgoing 50% Gewicht bekommen, mit Stärke-Multiplikator."""
     dependencies = {
         ("Source", "Target"): {"strength": "hoch", "percentage": 1.0},
     }
 
     weights = berechne_automatische_gewichte(dependencies)
 
-    # Target bekommt 100%, Source bekommt 50% -> nach Normalisierung
+    # Target bekommt 100%, Source bekommt 50%, beide mit Stärke-Multiplikator 1.5
+    # Target: 1.0 * 1.5 = 1.5, Source: 1.0 * 1.5 * 0.5 = 0.75
+    # Summe = 2.25 -> normalisiert: Target = 1.5/2.25 = 0.667, Source = 0.75/2.25 = 0.333
     assert "Target" in weights
     assert "Source" in weights
 
-    # Target sollte doppelt so viel Gewicht haben wie Source
-    # Target: 1.0, Source: 0.5 -> Summe 1.5 -> normalisiert: 0.667 und 0.333
+    # Target sollte doppelt so viel Gewicht haben wie Source (unabhängig von Stärke)
     assert abs(weights["Target"] - 0.6666666666666666) < 1e-6
     assert abs(weights["Source"] - 0.3333333333333333) < 1e-6
+
+
+def test_berechne_automatische_gewichte_strength_affects_weight():
+    """Prüft dass unterschiedliche Stärken unterschiedliche Gewichte erzeugen."""
+    # Gleiche Struktur, aber mit niedrig
+    deps_niedrig = {
+        ("A", "B"): {"strength": "niedrig", "percentage": 1.0},
+    }
+    deps_hoch = {
+        ("A", "B"): {"strength": "hoch", "percentage": 1.0},
+    }
+
+    weights_niedrig = berechne_automatische_gewichte(deps_niedrig)
+    weights_hoch = berechne_automatische_gewichte(deps_hoch)
+
+    # Verhältnis bleibt gleich (2:1), aber absolute Werte vor Normalisierung unterschiedlich
+    # Nach Normalisierung sind die Verhältnisse identisch
+    assert abs(weights_niedrig["B"] - weights_hoch["B"]) < 1e-6
+    assert abs(weights_niedrig["A"] - weights_hoch["A"]) < 1e-6
+
+    # Aber bei mehreren Dependencies macht Stärke einen Unterschied
+    deps_mixed = {
+        ("A", "B"): {"strength": "hoch", "percentage": 1.0},
+        ("C", "D"): {"strength": "niedrig", "percentage": 1.0},
+    }
+    weights_mixed = berechne_automatische_gewichte(deps_mixed)
+
+    # B (hoch) sollte mehr Gewicht haben als D (niedrig)
+    assert weights_mixed["B"] > weights_mixed["D"]
 
 
 def test_berechne_automatische_gewichte_fallback():

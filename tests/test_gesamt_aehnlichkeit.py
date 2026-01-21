@@ -35,7 +35,7 @@ def test_gewichtete_gesamt_aehnlichkeit() -> None:
         features_by_rotor=features_by_rotor,
         stats=numerische_statistik,  # type: ignore
         gewichtung_pro_kategorie=gewichtung,
-        k=1,
+        top_k=1,
     )
 
     rotor_id, gesamt_sim, similarity_pro_kat = ergebnisse[0]

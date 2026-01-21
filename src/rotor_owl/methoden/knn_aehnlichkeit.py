@@ -10,102 +10,113 @@ from rotor_owl.utils.math_utils import cosine_similarity, berechne_gewichtete_ge
 
 @dataclass(frozen=True)
 class _FeatureSpec:
-    # Für jede Kategorie: Liste numerischer Features (keys) und dict categorical key -> allowed values
+    """Feature-Spezifikation pro Kategorie.
+
+    Attributes:
+        numeric_keys: Liste numerischer Features (keys)
+        categorical_values: Dict categorical key -> allowed values
+        index: (key, kind, value) -> idx für Vektor-Position
+        dim: Gesamtdimension des Feature-Vektors
+    """
+
     numeric_keys: list[tuple[str, str]]
     categorical_values: dict[tuple[str, str], list[str]]
-    index: dict[tuple[str, str, str], int]  # (key, kind, value) -> idx
+    index: dict[tuple[str, str, str], int]
     dim: int
 
 
 @dataclass(frozen=True)
 class _KNNEmbeddings:
-    specs: dict[str, _FeatureSpec]  # kategorie -> spec
-    vectors: dict[str, dict[str, np.ndarray]]  # kategorie -> rotor_id -> vector
+    """kNN-Embeddings pro Kategorie.
+
+    Attributes:
+        specs: Kategorie -> Feature-Spezifikation
+        vectors: Kategorie -> Rotor-ID -> Feature-Vektor
+    """
+
+    specs: dict[str, _FeatureSpec]
+    vectors: dict[str, dict[str, np.ndarray]]
 
 
-def _is_numeric_value(v: object) -> bool:
-    return isinstance(v, (int, float))
+def _ist_numerischer_wert(wert: object) -> bool:
+    """Prüft ob ein Wert numerisch ist (int oder float)."""
+    return isinstance(wert, (int, float))
 
 
-def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    na = float(np.linalg.norm(a))
-    nb = float(np.linalg.norm(b))
-    if na == 0.0 or nb == 0.0:
-        return 0.0
-    return float(np.dot(a, b) / (na * nb))
-
-
-def _normalize_numeric(
-    x: float,
-    key: tuple[str, str],
+def _normalisiere_numerisch(
+    wert: float,
+    parameter_key: tuple[str, str],
     stats: dict[tuple[str, str], tuple[float, float]],
 ) -> float:
-    lo, hi = stats.get(key, (x, x))
-    if hi <= lo:
-        return 0.5  # keine Streuung -> neutral
-    t = (x - lo) / (hi - lo)
-    return float(max(0.0, min(1.0, t)))
+    """Normalisiert numerischen Wert auf [0, 1] Bereich."""
+    minimum, maximum = stats.get(parameter_key, (wert, wert))
+    if maximum <= minimum:
+        return 0.5  # Keine Streuung -> neutral
+    normalisiert = (wert - minimum) / (maximum - minimum)
+    return float(max(0.0, min(1.0, normalisiert)))
 
 
 def _build_feature_specs(
     features_by_rotor: dict[str, dict],
 ) -> dict[str, _FeatureSpec]:
     """
-    Scannt alle Rotoren und baut pro 3er-Kategorie:
-    - welche Parameter-Keys numerisch sind
-    - welche Parameter-Keys kategorial sind + mögliche Values
-    """
+    Baut Feature-Spezifikationen pro Kategorie.
 
-    numeric_keys_by_cat: dict[str, set[tuple[str, str]]] = {c: set() for c in KATEGORIEN_3}
-    cat_values_by_cat: dict[str, dict[tuple[str, str], set[str]]] = {c: {} for c in KATEGORIEN_3}
+    Args:
+        features_by_rotor (dict): Feature-Daten aller Rotoren
+
+    Returns:
+        dict: Kategorie -> _FeatureSpec
+    """
+    numerische_keys_pro_kat: dict[str, set[tuple[str, str]]] = {kat: set() for kat in KATEGORIEN_3}
+    kategorische_werte_pro_kat: dict[str, dict[tuple[str, str], set[str]]] = {
+        kat: {} for kat in KATEGORIEN_3
+    }
 
     for _, rotor_daten in features_by_rotor.items():
-        for key, pdata in rotor_daten["params"].items():
-            ptype = pdata.get("ptype") or "UNKNOWN"
-            cat = map_paramtype_to_kategorie(ptype)
+        for parameter_key, parameter_daten in rotor_daten["params"].items():
+            param_typ = parameter_daten.get("ptype") or "UNKNOWN"
+            kategorie = map_paramtype_to_kategorie(param_typ)
+            wert = parameter_daten.get("value")
 
-            v = pdata.get("value")
-
-            if v is None:
-                # missing erstmal ignorieren (kommt als eigene OneHot "<MISSING>")
+            if wert is None:
                 continue
 
-            if _is_numeric_value(v):
-                numeric_keys_by_cat[cat].add(key)
+            if _ist_numerischer_wert(wert):
+                numerische_keys_pro_kat[kategorie].add(parameter_key)
             else:
-                cat_values_by_cat[cat].setdefault(key, set()).add(str(v).strip())
+                kategorische_werte_pro_kat[kategorie].setdefault(parameter_key, set()).add(
+                    str(wert).strip()
+                )
 
     specs: dict[str, _FeatureSpec] = {}
 
-    for cat in KATEGORIEN_3:
-        num_keys = sorted(numeric_keys_by_cat[cat])
-        cat_vals: dict[tuple[str, str], list[str]] = {}
+    for kategorie in KATEGORIEN_3:
+        numerische_keys = sorted(numerische_keys_pro_kat[kategorie])
+        kategorische_werte: dict[tuple[str, str], list[str]] = {}
 
-        for k, vals in cat_values_by_cat[cat].items():
-            # "<MISSING>" immer erlauben
-            vals_sorted = sorted({v for v in vals if v})
-            cat_vals[k] = vals_sorted + ["<MISSING>"]
+        for param_key, werte in kategorische_werte_pro_kat[kategorie].items():
+            werte_sortiert = sorted({w for w in werte if w})
+            kategorische_werte[param_key] = werte_sortiert + ["<MISSING>"]
 
-        # Index bauen:
-        # numerisch: pro key 2 dimensionen -> (value, missing_flag)
-        # kategorial: pro value 1 dimension
+        # Index bauen: numerisch = 2 Dimensionen, kategorial = 1 pro Wert
         index: dict[tuple[str, str, str], int] = {}
         idx = 0
 
-        for k in num_keys:
-            index[(k[0], k[1], "__NUM_VALUE__")] = idx
+        for param_key in numerische_keys:
+            index[(param_key[0], param_key[1], "__NUM_VALUE__")] = idx
             idx += 1
-            index[(k[0], k[1], "__NUM_MISSING__")] = idx
+            index[(param_key[0], param_key[1], "__NUM_MISSING__")] = idx
             idx += 1
 
-        for k, values in cat_vals.items():
-            for vv in values:
-                index[(k[0], k[1], f"__CAT__{vv}")] = idx
+        for param_key, werte in kategorische_werte.items():
+            for wert in werte:
+                index[(param_key[0], param_key[1], f"__CAT__{wert}")] = idx
                 idx += 1
 
-        specs[cat] = _FeatureSpec(
-            numeric_keys=num_keys,
-            categorical_values=cat_vals,
+        specs[kategorie] = _FeatureSpec(
+            numeric_keys=numerische_keys,
+            categorical_values=kategorische_werte,
             index=index,
             dim=idx,
         )
@@ -113,49 +124,61 @@ def _build_feature_specs(
     return specs
 
 
-def _vectorize_rotor_for_category(
+def _vektorisiere_rotor_fuer_kategorie(
     rotor_id: str,
     features_by_rotor: dict[str, dict],
     stats: dict[tuple[str, str], tuple[float, float]],
-    category: str,
+    kategorie: str,
     spec: _FeatureSpec,
 ) -> np.ndarray:
-    vec = np.zeros(spec.dim, dtype=float)
+    """
+    Erstellt Feature-Vektor für einen Rotor in einer Kategorie.
 
-    params = features_by_rotor[rotor_id]["params"]
+    Args:
+        rotor_id (str): Rotor-ID
+        features_by_rotor (dict): Feature-Daten
+        stats (dict): Min/Max-Statistiken
+        kategorie (str): Kategorie-Name
+        spec (_FeatureSpec): Feature-Spezifikation
 
-    # 1) numerisch
-    for key in spec.numeric_keys:
-        pdata = params.get(key)
-        v = None if pdata is None else pdata.get("value")
+    Returns:
+        np.ndarray: Feature-Vektor
+    """
+    vektor = np.zeros(spec.dim, dtype=float)
+    parameter = features_by_rotor[rotor_id]["params"]
 
-        idx_value = spec.index.get((key[0], key[1], "__NUM_VALUE__"))
-        idx_missing = spec.index.get((key[0], key[1], "__NUM_MISSING__"))
+    # Numerische Features
+    for param_key in spec.numeric_keys:
+        param_daten = parameter.get(param_key)
+        wert = None if param_daten is None else param_daten.get("value")
 
-        if idx_value is None or idx_missing is None:
+        idx_wert = spec.index.get((param_key[0], param_key[1], "__NUM_VALUE__"))
+        idx_missing = spec.index.get((param_key[0], param_key[1], "__NUM_MISSING__"))
+
+        if idx_wert is None or idx_missing is None:
             continue
 
-        if v is None or not _is_numeric_value(v):
-            vec[idx_missing] = 1.0
-            vec[idx_value] = 0.0
+        if wert is None or not _ist_numerischer_wert(wert):
+            vektor[idx_missing] = 1.0
+            vektor[idx_wert] = 0.0
         else:
-            vec[idx_missing] = 0.0
-            vec[idx_value] = _normalize_numeric(float(v), key, stats)
+            vektor[idx_missing] = 0.0
+            vektor[idx_wert] = _normalisiere_numerisch(float(wert), param_key, stats)
 
-    # 2) kategorial
-    for key, allowed_values in spec.categorical_values.items():
-        pdata = params.get(key)
-        v = None if pdata is None else pdata.get("value")
+    # Kategorische Features
+    for param_key, erlaubte_werte in spec.categorical_values.items():
+        param_daten = parameter.get(param_key)
+        wert = None if param_daten is None else param_daten.get("value")
 
-        v_str = "<MISSING>" if v is None else str(v).strip()
-        if v_str not in allowed_values:
-            v_str = "<MISSING>"
+        wert_str = "<MISSING>" if wert is None else str(wert).strip()
+        if wert_str not in erlaubte_werte:
+            wert_str = "<MISSING>"
 
-        idx_cat = spec.index.get((key[0], key[1], f"__CAT__{v_str}"))
-        if idx_cat is not None:
-            vec[idx_cat] = 1.0
+        idx_kat = spec.index.get((param_key[0], param_key[1], f"__CAT__{wert_str}"))
+        if idx_kat is not None:
+            vektor[idx_kat] = 1.0
 
-    return vec
+    return vektor
 
 
 def build_knn_embeddings(
@@ -164,25 +187,32 @@ def build_knn_embeddings(
 ) -> _KNNEmbeddings:
     """
     Baut pro Kategorie Vektoren für alle Rotoren.
+
+    Args:
+        features_by_rotor (dict): Feature-Daten aller Rotoren
+        stats (dict): Min/Max-Statistiken
+
+    Returns:
+        _KNNEmbeddings: Embedding-Objekt mit Vektoren
     """
     specs = _build_feature_specs(features_by_rotor)
 
-    vectors: dict[str, dict[str, np.ndarray]] = {}
+    vektoren: dict[str, dict[str, np.ndarray]] = {}
     rotor_ids = list(features_by_rotor.keys())
 
-    for cat in KATEGORIEN_3:
-        spec = specs[cat]
-        vectors[cat] = {}
-        for rid in rotor_ids:
-            vectors[cat][rid] = _vectorize_rotor_for_category(
-                rotor_id=rid,
+    for kategorie in KATEGORIEN_3:
+        spec = specs[kategorie]
+        vektoren[kategorie] = {}
+        for rotor_id in rotor_ids:
+            vektoren[kategorie][rotor_id] = _vektorisiere_rotor_fuer_kategorie(
+                rotor_id=rotor_id,
                 features_by_rotor=features_by_rotor,
                 stats=stats,
-                category=cat,
+                kategorie=kategorie,
                 spec=spec,
             )
 
-    return _KNNEmbeddings(specs=specs, vectors=vectors)
+    return _KNNEmbeddings(specs=specs, vectors=vektoren)
 
 
 def rotor_similarity_knn(
@@ -195,20 +225,22 @@ def rotor_similarity_knn(
     Berechnet Rotor-Similarity mit kNN/Cosine-Methode.
 
     Args:
-        rotor_a_id: ID des ersten Rotors
-        rotor_b_id: ID des zweiten Rotors
-        embeddings: Vorberechnete Feature-Vektoren pro Kategorie
-        gewichtung_pro_kategorie: Gewichte für die 3 Kategorien
+        rotor_a_id (str): ID des ersten Rotors
+        rotor_b_id (str): ID des zweiten Rotors
+        embeddings (_KNNEmbeddings): Vorberechnete Feature-Vektoren
+        gewichtung_pro_kategorie (dict): Gewichte für die 3 Kategorien
 
     Returns:
-        Tuple aus (gesamt_similarity, similarity_pro_kategorie)
+        tuple: (gesamt_similarity, similarity_pro_kategorie)
     """
     sim_pro_kat: dict[str, float] = {}
 
-    for cat, vecs in embeddings.vectors.items():
-        va = vecs[rotor_a_id]
-        vb = vecs[rotor_b_id]
-        sim_pro_kat[cat] = cosine_similarity(va, vb)
+    for kategorie, vektor_dict in embeddings.vectors.items():
+        vektor_a = vektor_dict[rotor_a_id]
+        vektor_b = vektor_dict[rotor_b_id]
+        # Cosine gibt [-1, 1], normalisieren auf [0, 1]
+        raw_sim = cosine_similarity(vektor_a, vektor_b)
+        sim_pro_kat[kategorie] = (raw_sim + 1.0) / 2.0
 
     # Gewichtete Aggregation (zentrale Funktion)
     total = berechne_gewichtete_gesamt_similarity(sim_pro_kat, gewichtung_pro_kategorie)
@@ -221,20 +253,33 @@ def berechne_topk_aehnlichkeiten_knn(
     rotor_ids: list[str],
     embeddings: _KNNEmbeddings,
     gewichtung_pro_kategorie: dict[str, float],
-    k: int,
+    top_k: int,
 ) -> list[tuple[str, float, dict[str, float]]]:
+    """
+    Berechnet die Top-k ähnlichsten Rotoren.
+
+    Args:
+        query_rotor_id (str): ID des Abfrage-Rotors
+        rotor_ids (list): Liste aller Rotor-IDs
+        embeddings (_KNNEmbeddings): Vorberechnete Embeddings
+        gewichtung_pro_kategorie (dict): Kategorie-Gewichte
+        top_k (int): Anzahl der Ergebnisse
+
+    Returns:
+        list: Top-k Ergebnisse als (rotor_id, similarity, sim_pro_kat)
+    """
     ergebnisse: list[tuple[str, float, dict[str, float]]] = []
 
-    for ziel in rotor_ids:
-        if ziel == query_rotor_id:
+    for ziel_rotor_id in rotor_ids:
+        if ziel_rotor_id == query_rotor_id:
             continue
         total, sim_pro_kat = rotor_similarity_knn(
             rotor_a_id=query_rotor_id,
-            rotor_b_id=ziel,
+            rotor_b_id=ziel_rotor_id,
             embeddings=embeddings,
             gewichtung_pro_kategorie=gewichtung_pro_kategorie,
         )
-        ergebnisse.append((ziel, total, sim_pro_kat))
+        ergebnisse.append((ziel_rotor_id, total, sim_pro_kat))
 
     ergebnisse.sort(key=lambda x: x[1], reverse=True)
-    return ergebnisse[:k]
+    return ergebnisse[:top_k]

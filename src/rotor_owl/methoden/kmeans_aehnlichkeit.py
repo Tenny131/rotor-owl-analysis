@@ -6,113 +6,96 @@ from typing import Any
 import numpy as np
 
 from rotor_owl.methoden.knn_aehnlichkeit import build_knn_embeddings
-from rotor_owl.utils.math_utils import cosine_similarity, berechne_gewichtete_gesamt_similarity
+from rotor_owl.utils.math_utils import (
+    cosine_similarity,
+    berechne_gewichtete_gesamt_similarity,
+    normalisiere_embeddings_struktur,
+)
 
 
-def _row_normalize(X: np.ndarray) -> np.ndarray:
-    norms = np.linalg.norm(X, axis=1, keepdims=True)
-    norms = np.where(norms == 0.0, 1.0, norms)
-    return X / norms
-
-
-def _normalize_embeddings_structure(
-    embeddings: Any,
-    rotor_ids: list[str],
-) -> dict[str, dict[str, np.ndarray]]:
+def _zeilen_normalisieren(matrix: np.ndarray) -> np.ndarray:
     """
-    Robust gegen 2 mögliche Strukturen:
-    (A) embeddings[rotor_id][kategorie] = vector
-    (B) embeddings[kategorie][rotor_id] = vector
+    L2-Normalisierung jeder Zeile.
 
-    Gibt immer zurück:
-      normalized[rotor_id][kategorie] = np.ndarray
+    Args:
+        matrix (np.ndarray): Eingabematrix
+
+    Returns:
+        np.ndarray: Zeilennormalisierte Matrix
     """
-    if not embeddings:
-        return {}
-
-    # Achtung: embeddings muss ein dict sein (bei uns: base.vectors)
-    if not isinstance(embeddings, dict):
-        return {}
-
-    first_key = next(iter(embeddings.keys()))
-    first_val = embeddings[first_key]
-
-    # Fall (A): embeddings[rotor_id] = {cat: vec}
-    if isinstance(first_val, dict) and first_key in rotor_ids:
-        out: dict[str, dict[str, np.ndarray]] = {}
-        for rid in rotor_ids:
-            cat_map = embeddings.get(rid, {})
-            out[rid] = {k: np.asarray(v, dtype=float) for k, v in cat_map.items()}
-        return out
-
-    # Fall (B): embeddings[cat] = {rid: vec}
-    out_b: dict[str, dict[str, np.ndarray]] = {rid: {} for rid in rotor_ids}
-    for cat, rid_map in embeddings.items():
-        if not isinstance(rid_map, dict):
-            continue
-        for rid, vec in rid_map.items():
-            if rid in out_b:
-                out_b[rid][cat] = np.asarray(vec, dtype=float)
-    return out_b
+    normen = np.linalg.norm(matrix, axis=1, keepdims=True)
+    normen = np.where(normen == 0.0, 1.0, normen)
+    return matrix / normen
 
 
 @dataclass(frozen=True)
 class _KMeansResult:
+    """K-Means Clustering-Ergebnis."""
+
     labels_by_rotor: dict[str, int]  # rotor_id -> cluster_id
     centroids: np.ndarray  # shape: (k, dim)
 
 
 def _spherical_kmeans(
-    X: np.ndarray,
+    eingabe_matrix: np.ndarray,
     rotor_ids: list[str],
-    k: int,
+    anzahl_cluster: int,
     seed: int = 42,
     max_iter: int = 50,
 ) -> _KMeansResult:
     """
-    Custom "Spherical K-Means":
-    - arbeitet auf L2-normalisierten Vektoren
-    - Assignment über max(cosine) = max(dot) weil normiert
-    - Update: centroid = normalisierter Mittelwert der Cluster-Vektoren
+    Spherical K-Means auf L2-normalisierten Vektoren.
+
+    Args:
+        eingabe_matrix (np.ndarray): Feature-Matrix (n_samples, dim)
+        rotor_ids (list): Rotor-IDs
+        anzahl_cluster (int): Anzahl Cluster
+        seed (int): Random Seed
+        max_iter (int): Maximale Iterationen
+
+    Returns:
+        _KMeansResult: Cluster-Labels und Zentroide
     """
     rng = np.random.default_rng(seed)
 
-    n, dim = X.shape
-    if n == 0:
+    anzahl_samples, dim = eingabe_matrix.shape
+    if anzahl_samples == 0:
         return _KMeansResult(labels_by_rotor={}, centroids=np.zeros((0, dim), dtype=float))
 
-    k_eff = max(1, min(k, n))  # nicht mehr Cluster als Punkte
-    Xn = _row_normalize(np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0))
+    effektive_cluster = max(1, min(anzahl_cluster, anzahl_samples))
+    normalisiert = _zeilen_normalisieren(
+        np.nan_to_num(eingabe_matrix, nan=0.0, posinf=0.0, neginf=0.0)
+    )
 
-    # Init: zufällige k Punkte als Start-Zentroiden
-    init_idx = rng.choice(n, size=k_eff, replace=False)
-    C = Xn[init_idx].copy()  # (k, dim)
+    # Init: zufällige Punkte als Start-Zentroide
+    init_indices = rng.choice(anzahl_samples, size=effektive_cluster, replace=False)
+    zentroide = normalisiert[init_indices].copy()
 
-    labels = np.zeros(n, dtype=int)
+    labels = np.zeros(anzahl_samples, dtype=int)
 
     for _ in range(max_iter):
         # Assignment: Cluster = argmax(dot(X, C))
-        sims = Xn @ C.T  # (n, k)
-        new_labels = np.argmax(sims, axis=1)
+        aehnlichkeiten = normalisiert @ zentroide.T
+        neue_labels = np.argmax(aehnlichkeiten, axis=1)
 
-        if np.array_equal(new_labels, labels):
+        if np.array_equal(neue_labels, labels):
             break
 
-        labels = new_labels
+        labels = neue_labels
 
-        # Update Zentroiden
-        for j in range(k_eff):
-            mask = labels == j
-            if not np.any(mask):
-                # leeres Cluster -> random re-init
-                C[j] = Xn[rng.integers(0, n)]
+        # Update Zentroide
+        for cluster_idx in range(effektive_cluster):
+            maske = labels == cluster_idx
+            if not np.any(maske):
+                # Leeres Cluster -> random re-init
+                zentroide[cluster_idx] = normalisiert[rng.integers(0, anzahl_samples)]
             else:
-                cj = np.mean(Xn[mask], axis=0)
-                norm = np.linalg.norm(cj)
-                C[j] = cj / norm if norm != 0.0 else cj
+                mittelwert = np.mean(normalisiert[maske], axis=0)
+                norm = np.linalg.norm(mittelwert)
+                zentroide[cluster_idx] = mittelwert / norm if norm != 0.0 else mittelwert
 
-    labels_by_rotor = {rid: int(labels[i]) for i, rid in enumerate(rotor_ids)}
-    return _KMeansResult(labels_by_rotor=labels_by_rotor, centroids=C)
+    labels_by_rotor = {rotor_id: int(labels[idx]) for idx, rotor_id in enumerate(rotor_ids)}
+    return _KMeansResult(labels_by_rotor=labels_by_rotor, centroids=zentroide)
 
 
 def build_kmeans_models(
@@ -123,62 +106,65 @@ def build_kmeans_models(
     max_iter: int = 50,
 ) -> dict[str, _KMeansResult]:
     """
-    Option D:
-    - Reuse Feature-Vektoren aus build_knn_embeddings (Option B)
-    - Pro Kategorie: Spherical K-Means clustern
+    Baut K-Means Modelle pro Kategorie.
 
-    Return:
-      models[category] = _KMeansResult(labels_by_rotor, centroids)
+    Args:
+        features_by_rotor (dict): Feature-Daten aller Rotoren
+        stats: Min/Max-Statistiken
+        n_clusters (int): Anzahl Cluster
+        seed (int): Random Seed
+        max_iter (int): Maximale Iterationen
+
+    Returns:
+        dict: {kategorie: _KMeansResult}
     """
     rotor_ids = sorted(features_by_rotor.keys())
 
     base = build_knn_embeddings(features_by_rotor, stats)
-    base_norm = _normalize_embeddings_structure(base.vectors, rotor_ids)
+    base_norm = normalisiere_embeddings_struktur(base.vectors, rotor_ids)
 
-    # Kategorien ableiten
-    categories = sorted({c for rid in base_norm for c in base_norm[rid].keys()})
-    if not categories:
+    kategorien = sorted({kat for rotor_id in base_norm for kat in base_norm[rotor_id].keys()})
+    if not kategorien:
         return {}
 
-    models: dict[str, _KMeansResult] = {}
+    modelle: dict[str, _KMeansResult] = {}
 
-    for cat in categories:
-        X_list: list[np.ndarray] = []
-        for rid in rotor_ids:
-            vec = base_norm.get(rid, {}).get(cat)
-            if vec is None:
-                # fallback = irgendein Vektor aus der Kategorie -> Nullvektor gleicher Länge
+    for kategorie in kategorien:
+        vektoren_liste: list[np.ndarray] = []
+        for rotor_id in rotor_ids:
+            vektor = base_norm.get(rotor_id, {}).get(kategorie)
+            if vektor is None:
+                # Fallback: Nullvektor der passenden Länge
                 fallback = None
-                for rid2 in rotor_ids:
-                    if cat in base_norm.get(rid2, {}):
-                        fallback = base_norm[rid2][cat]
+                for anderer_rotor in rotor_ids:
+                    if kategorie in base_norm.get(anderer_rotor, {}):
+                        fallback = base_norm[anderer_rotor][kategorie]
                         break
                 if fallback is None:
                     continue
-                vec = np.zeros_like(fallback)
-            X_list.append(vec)
+                vektor = np.zeros_like(fallback)
+            vektoren_liste.append(vektor)
 
-        if not X_list:
+        if not vektoren_liste:
             continue
 
-        X = np.vstack(X_list).astype(float)
-        if X.shape[1] <= 1:
-            # zu wenig Dim -> Clustering bringt nix
-            # => 1 Cluster für alle
-            labels_by_rotor = {rid: 0 for rid in rotor_ids}
-            centroids = _row_normalize(np.mean(X, axis=0, keepdims=True))
-            models[cat] = _KMeansResult(labels_by_rotor=labels_by_rotor, centroids=centroids)
+        eingabe_matrix = np.vstack(vektoren_liste).astype(float)
+        if eingabe_matrix.shape[1] <= 1:
+            # Zu wenig Dimensionen -> 1 Cluster für alle
+            labels_by_rotor = {rotor_id: 0 for rotor_id in rotor_ids}
+            zentroide = _zeilen_normalisieren(np.mean(eingabe_matrix, axis=0, keepdims=True))
+            modelle[kategorie] = _KMeansResult(labels_by_rotor=labels_by_rotor, centroids=zentroide)
             continue
 
-        models[cat] = _spherical_kmeans(
-            X=X,
+        modelle[kategorie] = _spherical_kmeans(
+            eingabe_matrix=eingabe_matrix,
             rotor_ids=rotor_ids,
-            k=n_clusters,
+            anzahl_cluster=n_clusters,
             seed=seed,
             max_iter=max_iter,
         )
 
-    return models
+    return modelle
 
 
 def berechne_topk_aehnlichkeiten_kmeans(
@@ -188,27 +174,34 @@ def berechne_topk_aehnlichkeiten_kmeans(
     stats: Any,
     gewichtung_pro_kategorie: dict[str, float],
     n_clusters: int = 5,
-    k: int = 5,
+    top_k: int = 5,
     seed: int = 42,
     max_iter: int = 50,
 ) -> list[tuple[str, float, dict[str, float]]]:
     """
-    Similarity-Scoring (Option D):
-    - Clustering pro Kategorie mit Custom Spherical K-Means
-    - pro Kategorie:
-        wenn gleicher Cluster: cosine(feature_vector_query, feature_vector_other)
-        sonst: cosine(centroid_cluster_query, centroid_cluster_other) * 0.5
-    - Dann gewichtete Aggregation wie immer
+    Berechnet Top-k ähnliche Rotoren mit K-Means Clustering.
+
+    Args:
+        query_rotor_id (str): Query-Rotor ID
+        rotor_ids (list): Liste aller Rotor-IDs
+        features_by_rotor (dict): Feature-Daten
+        stats: Min/Max-Statistiken
+        gewichtung_pro_kategorie (dict): Kategorie-Gewichte
+        n_clusters (int): Anzahl Cluster
+        top_k (int): Anzahl Top-Ergebnisse
+        seed (int): Random Seed
+        max_iter (int): Maximale Iterationen
+
+    Returns:
+        list: (rotor_id, gesamt_similarity, similarity_pro_kategorie), sortiert
     """
     if query_rotor_id not in rotor_ids:
         raise ValueError(f"Query Rotor nicht gefunden: {query_rotor_id}")
 
-    # Reuse Feature-Vektoren aus Methode B
     base = build_knn_embeddings(features_by_rotor, stats)
-    base_norm = _normalize_embeddings_structure(base.vectors, rotor_ids)
+    base_norm = normalisiere_embeddings_struktur(base.vectors, rotor_ids)
 
-    # Modelle (Cluster) bauen
-    models = build_kmeans_models(
+    modelle = build_kmeans_models(
         features_by_rotor=features_by_rotor,
         stats=stats,
         n_clusters=n_clusters,
@@ -216,53 +209,55 @@ def berechne_topk_aehnlichkeiten_kmeans(
         max_iter=max_iter,
     )
 
-    q_map = base_norm.get(query_rotor_id, {})
-    categories = sorted({*q_map.keys(), *gewichtung_pro_kategorie.keys()})
+    query_vektoren = base_norm.get(query_rotor_id, {})
+    kategorien = sorted({*query_vektoren.keys(), *gewichtung_pro_kategorie.keys()})
 
-    results: list[tuple[str, float, dict[str, float]]] = []
+    ergebnisse: list[tuple[str, float, dict[str, float]]] = []
 
-    for other in rotor_ids:
-        if other == query_rotor_id:
+    for ziel_rotor_id in rotor_ids:
+        if ziel_rotor_id == query_rotor_id:
             continue
 
-        o_map = base_norm.get(other, {})
+        ziel_vektoren = base_norm.get(ziel_rotor_id, {})
+        sim_pro_kat: dict[str, float] = {}
 
-        sim_by_cat: dict[str, float] = {}
-
-        for cat in categories:
-            w = float(gewichtung_pro_kategorie.get(cat, 0.0))
-            if w <= 0.0:
-                sim_by_cat[cat] = 0.0
+        for kategorie in kategorien:
+            gewicht = float(gewichtung_pro_kategorie.get(kategorie, 0.0))
+            if gewicht <= 0.0:
+                sim_pro_kat[kategorie] = 0.0
                 continue
 
-            qv = q_map.get(cat)
-            ov = o_map.get(cat)
+            query_vektor = query_vektoren.get(kategorie)
+            ziel_vektor = ziel_vektoren.get(kategorie)
 
-            if qv is None or ov is None:
-                s = 0.0
+            if query_vektor is None or ziel_vektor is None:
+                similarity = 0.0
             else:
-                model = models.get(cat)
-                if model is None:
-                    # fallback: direkt cosine
-                    s = cosine_similarity(qv, ov)
+                modell = modelle.get(kategorie)
+                if modell is None:
+                    # Fallback: direkt Cosine, normalisiert auf [0, 1]
+                    similarity = (cosine_similarity(query_vektor, ziel_vektor) + 1.0) / 2.0
                 else:
-                    q_label = model.labels_by_rotor.get(query_rotor_id, -1)
-                    o_label = model.labels_by_rotor.get(other, -1)
+                    query_label = modell.labels_by_rotor.get(query_rotor_id, -1)
+                    ziel_label = modell.labels_by_rotor.get(ziel_rotor_id, -1)
 
-                    if q_label == -1 or o_label == -1:
-                        s = cosine_similarity(qv, ov)
-                    elif q_label == o_label:
-                        s = cosine_similarity(qv, ov)
+                    if query_label == -1 or ziel_label == -1:
+                        similarity = (cosine_similarity(query_vektor, ziel_vektor) + 1.0) / 2.0
+                    elif query_label == ziel_label:
+                        # Gleicher Cluster: direkte Similarity
+                        similarity = (cosine_similarity(query_vektor, ziel_vektor) + 1.0) / 2.0
                     else:
-                        cq = model.centroids[q_label]
-                        co = model.centroids[o_label]
-                        s = 0.5 * max(0.0, cosine_similarity(cq, co))
+                        # Verschiedene Cluster: halbe Zentroid-Similarity
+                        query_zentroid = modell.centroids[query_label]
+                        ziel_zentroid = modell.centroids[ziel_label]
+                        similarity = 0.5 * (
+                            (cosine_similarity(query_zentroid, ziel_zentroid) + 1.0) / 2.0
+                        )
 
-            sim_by_cat[cat] = s
+            sim_pro_kat[kategorie] = similarity
 
-        # Gewichtete Gesamt-Similarity (zentrale Funktion)
-        sim_total = berechne_gewichtete_gesamt_similarity(sim_by_cat, gewichtung_pro_kategorie)
-        results.append((other, sim_total, sim_by_cat))
+        sim_total = berechne_gewichtete_gesamt_similarity(sim_pro_kat, gewichtung_pro_kategorie)
+        ergebnisse.append((ziel_rotor_id, sim_total, sim_pro_kat))
 
-    results.sort(key=lambda x: x[1], reverse=True)
-    return results[:k]
+    ergebnisse.sort(key=lambda x: x[1], reverse=True)
+    return ergebnisse[:top_k]

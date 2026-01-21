@@ -40,8 +40,8 @@ def component_class_mapper(data, graph):
 def parameter_class_mapper(data, graph):
     """Maps parameters from the data to ontology classes.
     Args:
-    data (pd.DataFrame): DataFrame containing parameter information.
-    graph (rdflib.Graph): RDFLib graph to which the classes will be added.
+        data (pd.DataFrame): DataFrame containing parameter information.
+        graph (rdflib.Graph): RDFLib graph to which the classes will be added.
     """
 
     # define Parameter as subclass of Object

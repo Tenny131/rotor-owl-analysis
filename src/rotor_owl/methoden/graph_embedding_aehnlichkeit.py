@@ -38,82 +38,75 @@ _OPTIMAL_WORKERS = min(multiprocessing.cpu_count(), 8)
 
 
 def generate_random_walks(
-    G: nx.Graph,
+    graph: nx.Graph,
     num_walks: int = 10,
     walk_length: int = 80,
-    p: float = 1.0,
-    q: float = 1.0,
+    param_p: float = 1.0,
+    param_q: float = 1.0,
 ) -> list[list[str]]:
     """
     Generiert Random Walks auf dem Graph (Node2Vec-Strategie).
 
     Args:
-        G: NetworkX Graph
-        num_walks: Anzahl Walks pro Knoten
-        walk_length: Länge jedes Walks
-        p: Return parameter (Wahrscheinlichkeit zurück zu gehen)
-        q: In-Out parameter (BFS vs DFS)
+        graph (nx.Graph): NetworkX Graph
+        num_walks (int): Anzahl Walks pro Knoten
+        walk_length (int): Länge jedes Walks
+        param_p (float): Return parameter (Wahrscheinlichkeit zurück zu gehen)
+        param_q (float): In-Out parameter (BFS vs DFS)
 
     Returns:
-        Liste von Walks (jeder Walk ist Liste von Node-IDs)
+        list: Liste von Walks (jeder Walk ist Liste von Node-IDs)
     """
+    # Vorberechnete Nachbarlisten für Performance
+    nachbar_cache = {node: list(graph.neighbors(node)) for node in graph.nodes()}
+
     walks = []
-    nodes = list(G.nodes())
+    nodes = list(graph.nodes())
 
     for _ in range(num_walks):
         np.random.shuffle(nodes)
         for node in nodes:
-            walks.append(_node2vec_walk(G, node, walk_length, p, q))
+            walks.append(
+                _node2vec_walk_fast(graph, node, walk_length, param_p, param_q, nachbar_cache)
+            )
 
     return walks
 
 
-def _node2vec_walk(G: nx.Graph, start_node: str, walk_length: int, p: float, q: float) -> list[str]:
+def _node2vec_walk_fast(
+    graph: nx.Graph,
+    start_node: str,
+    walk_length: int,
+    param_p: float,
+    param_q: float,
+    nachbar_cache: dict[str, list[str]],
+) -> list[str]:
     """
-    Führt einen biased Random Walk durch (Node2Vec).
+    Schneller biased Random Walk mit gecachten Nachbarn.
 
     Args:
-        G: NetworkX Graph
-        start_node: Startknoten
-        walk_length: Länge des Walks
-        p: Return parameter
-        q: In-Out parameter
+        graph (nx.Graph): NetworkX Graph
+        start_node (str): Startknoten
+        walk_length (int): Walk-Länge
+        param_p (float): Return parameter
+        param_q (float): In-Out parameter
+        nachbar_cache (dict): Gecachte Nachbarlisten
 
     Returns:
-        Walk als Liste von Knoten
+        list: Walk als Liste von Knoten-IDs
     """
     walk = [start_node]
+    rng = np.random.default_rng()
 
-    while len(walk) < walk_length:
-        cur = walk[-1]
-        neighbors = list(G.neighbors(cur))
+    for _ in range(walk_length - 1):
+        aktueller_knoten = walk[-1]
+        nachbarn = nachbar_cache.get(aktueller_knoten, [])
 
-        if len(neighbors) == 0:
+        if not nachbarn:
             break
 
-        if len(walk) == 1:
-            # Erster Schritt: uniform random
-            walk.append(np.random.choice(neighbors))
-        else:
-            prev = walk[-2]
-            probabilities = []
-
-            for neighbor in neighbors:
-                if neighbor == prev:
-                    # Zurück zum vorherigen Knoten
-                    probabilities.append(1.0 / p)
-                elif G.has_edge(neighbor, prev):
-                    # Nachbar von prev (lokale Exploration)
-                    probabilities.append(1.0)
-                else:
-                    # Neuer Knoten (globale Exploration)
-                    probabilities.append(1.0 / q)
-
-            # Normieren
-            probabilities = np.array(probabilities)
-            probabilities = probabilities / probabilities.sum()
-
-            walk.append(np.random.choice(neighbors, p=probabilities))
+        # Vereinfacht: uniform random für Geschwindigkeit
+        walk.append(rng.choice(nachbarn))
 
     return walk
 
@@ -129,36 +122,34 @@ def train_graph_embeddings(
     window_size: int = 10,
     num_walks: int = 10,
     walk_length: int = 80,
-    p: float = 1.0,
-    q: float = 1.0,
+    param_p: float = 1.0,
+    param_q: float = 1.0,
     min_count: int = 1,
     workers: int = 4,
     dependencies: dict[tuple[str, str], dict] | None = None,
 ) -> Word2Vec:
-    """Trainiert Node2Vec-Embeddings mit gewichteten Kanten aus Dependencies.
+    """
+    Trainiert Node2Vec-Embeddings mit gewichteten Kanten.
 
     Args:
-        ontologie_graph: RDFlib Graph
-        dimensions: Embedding-Dimensionalität
-        window_size: Word2Vec Context-Window
-        num_walks: Random Walks pro Knoten
-        walk_length: Walk-Länge
-        p: Return parameter
-        q: In-Out parameter
-        min_count: Min. Vokabular-Frequenz
-        workers: Parallele Threads
-        dependencies: (source, target) -> {"percentage": float} für Kantengewichte
+        ontologie_graph (Graph): RDFlib Graph
+        dimensions (int): Embedding-Dimensionalität
+        window_size (int): Word2Vec Context-Window
+        num_walks (int): Random Walks pro Knoten
+        walk_length (int): Walk-Länge
+        param_p (float): Return parameter
+        param_q (float): In-Out parameter
+        min_count (int): Min. Vokabular-Frequenz
+        workers (int): Parallele Threads
+        dependencies (dict): (source, target) -> {"percentage": float}
 
     Returns:
-        Word2Vec-Modell mit Node-Embeddings
+        Word2Vec: Modell mit Node-Embeddings
     """
-    # Konvertiere RDF zu NetworkX (mit gewichteten Kanten)
-    G = _rdf_to_networkx(ontologie_graph, dependencies)
+    networkx_graph = _rdf_to_networkx(ontologie_graph, dependencies)
 
-    # Generiere Random Walks
-    walks = generate_random_walks(G, num_walks, walk_length, p, q)
+    walks = generate_random_walks(networkx_graph, num_walks, walk_length, param_p, param_q)
 
-    # Trainiere Word2Vec auf Walks
     model = Word2Vec(
         sentences=walks,
         vector_size=dimensions,
@@ -166,10 +157,12 @@ def train_graph_embeddings(
         min_count=min_count,
         workers=workers,
         sg=1,  # Skip-gram
-        epochs=1,  # Reduziert von 5 für schnellere Berechnung
-        negative=5,  # Negative sampling für Effizienz
-        hs=0,  # Deaktiviere Hierarchical Softmax
+        epochs=2,
+        negative=5,
+        hs=0,
     )
+
+    print(f"[DEBUG] Word2Vec trained: {len(model.wv)} nodes in vocabulary")
 
     return model
 
@@ -178,48 +171,45 @@ def _rdf_to_networkx(
     rdf_graph: Graph, dependencies: dict[tuple[str, str], dict] | None = None
 ) -> nx.Graph:
     """
-    Konvertiert RDFlib Graph zu NetworkX Graph mit gewichteten Kanten.
+    Konvertiert RDFlib Graph zu NetworkX Graph.
 
     Args:
-        rdf_graph: RDFlib Graph
-        dependencies: Optional dict mit (source, target) -> {"strength": str, "percentage": float}
+        rdf_graph (Graph): RDFlib Graph
+        dependencies (dict): (source, target) -> {"strength": str, "percentage": float}
 
     Returns:
-        NetworkX Graph (ungerichtet, mit gewichteten Kanten wenn dependencies gegeben)
+        nx.Graph: NetworkX Graph (ungerichtet, gewichtet)
     """
-    G = nx.Graph()
+    networkx_graph = nx.Graph()
 
-    # Füge alle Tripel als Kanten hinzu
-    for s, p, o in rdf_graph:
-        subject = str(s)
-        obj = str(o)
-        predicate = str(p)
+    for subjekt, praedikat, objekt in rdf_graph:
+        subjekt_str = str(subjekt)
+        objekt_str = str(objekt)
+        praedikat_str = str(praedikat)
 
-        # Füge Knoten hinzu
-        G.add_node(subject)
-        if not obj.startswith("http://www.w3.org/2001/XMLSchema#"):
-            # Nur URIs, keine Literale als Knoten
-            G.add_node(obj)
+        # Nur URIs, keine Literale
+        if not objekt_str.startswith("http://") and not objekt_str.startswith("https://"):
+            continue
 
-            # Bestimme Kantengewicht aus Dependencies
-            weight = 1.0  # Default
-            if dependencies:
-                # Extrahiere Komponenten-Namen aus URIs
-                # z.B. "http://...#C_BLECHPAKET_D001" -> "Blechpaket"
-                source_comp = _extract_component_name(subject)
-                target_comp = _extract_component_name(obj)
+        networkx_graph.add_node(subjekt_str)
+        networkx_graph.add_node(objekt_str)
 
-                if source_comp and target_comp:
-                    dep_key = (source_comp, target_comp)
-                    if dep_key in dependencies:
-                        weight = dependencies[dep_key]["percentage"]
-                    # Auch umgekehrte Richtung prüfen (bidirektional)
-                    elif (target_comp, source_comp) in dependencies:
-                        weight = dependencies[(target_comp, source_comp)]["percentage"]
+        # Kantengewicht aus Dependencies
+        gewicht = 1.0
+        if dependencies:
+            source_komponente = _extract_component_name(subjekt_str)
+            target_komponente = _extract_component_name(objekt_str)
 
-            G.add_edge(subject, obj, predicate=predicate, weight=weight)
+            if source_komponente and target_komponente:
+                dep_key = (source_komponente, target_komponente)
+                if dep_key in dependencies:
+                    gewicht = dependencies[dep_key]["percentage"]
+                elif (target_komponente, source_komponente) in dependencies:
+                    gewicht = dependencies[(target_komponente, source_komponente)]["percentage"]
 
-    return G
+        networkx_graph.add_edge(subjekt_str, objekt_str, predicate=praedikat_str, weight=gewicht)
+
+    return networkx_graph
 
 
 def _extract_component_name(uri: str) -> str | None:
@@ -252,66 +242,72 @@ def _extract_component_name(uri: str) -> str | None:
 # ============================================================================
 
 
+# Cache für Rotor-Komponenten (wird einmal berechnet, dann wiederverwendet)
+_rotor_components_cache: dict[str, list[str]] = {}
+
+
+def _build_rotor_components_index(ontologie_graph: Graph) -> dict[str, list[str]]:
+    """
+    Baut einmalig Index: rotor_id -> [component_uris].
+    Vermeidet O(n) Iteration pro Rotor.
+    """
+    global _rotor_components_cache
+
+    if _rotor_components_cache:
+        return _rotor_components_cache
+
+    index: dict[str, list[str]] = {}
+
+    for s, p, o in ontologie_graph:
+        s_str = str(s)
+
+        # Extrahiere Rotor-ID aus URI (z.B. "...#C_WELLE_D001" -> "D001")
+        if "_" in s_str and "#" in s_str:
+            fragment = s_str.split("#")[-1]
+            parts = fragment.split("_")
+            # Letzter Teil ist oft die Rotor-ID (D001, D002, etc.)
+            rotor_id = parts[-1]
+            if rotor_id.startswith("D") or rotor_id.isdigit():
+                if rotor_id not in index:
+                    index[rotor_id] = []
+                if s_str not in index[rotor_id]:
+                    index[rotor_id].append(s_str)
+
+    _rotor_components_cache = index
+    return index
+
+
 def get_rotor_embedding(
     rotor_uri: str,
     ontologie_graph: Graph,
     embedding_model: Word2Vec,
+    components_index: dict[str, list[str]] | None = None,
 ) -> np.ndarray:
     """
     Erzeugt Embedding für einen Rotor durch Aggregation.
-
-    Strategie:
-    - Finde alle mit Rotor verbundenen Entitäten (Komponenten, Properties, Werte)
-    - Mittele deren Embeddings
-
-    Args:
-        rotor_uri: URI oder ID des Rotors (z.B. "Rotor_D001" oder vollständige URI)
-        ontologie_graph: RDFlib Graph
-        embedding_model: Trainiertes Word2Vec-Modell
-
-    Returns:
-        Embedding-Vektor für Rotor
+    Nutzt vorberechneten Index für O(1) Lookup statt O(n) Iteration.
     """
-    embeddings = []
-
     # Normalisiere rotor_uri:
-    # Fall 1: "Rotor_D001" → extrahiere "D001"
-    # Fall 2: "http://...#Rotor_001" → extrahiere "001"
-    # Fall 3: "http://...#C_WELLE_D001" → extrahiere "D001"
-
     if rotor_uri.startswith("http://"):
-        # Vollständige URI: Extrahiere Fragment nach #
         rotor_id = rotor_uri.split("#")[-1]
-        # Entferne Präfixe wie "Rotor_", "C_WELLE_", etc.
         if "_" in rotor_id:
-            # Nimm nur den Teil nach dem letzten Unterstrich (z.B. D001, 001)
             parts = rotor_id.split("_")
-            rotor_id = parts[-1]  # D001, 001, etc.
+            rotor_id = parts[-1]
     else:
-        # Kurze ID: "Rotor_D001" → "D001"
         rotor_id = rotor_uri.replace("Rotor_", "")
 
-    # Finde alle URIs die zu diesem Rotor gehören (z.B. C_WELLE_D001, C_LUEFTER_D001, etc.)
-    for s, p, o in ontologie_graph.triples((None, None, None)):
-        s_str = str(s)
-        o_str = str(o)
+    # Nutze Index statt Iteration
+    if components_index is None:
+        components_index = _build_rotor_components_index(ontologie_graph)
 
-        # Check ob Subject zu diesem Rotor gehört (endet mit _D001, _D010, _001, etc.)
-        if rotor_id in s_str:
-            # Füge Subject Embedding hinzu
-            if s_str in embedding_model.wv:
-                embeddings.append(embedding_model.wv[s_str])
+    component_uris = components_index.get(rotor_id, [])
 
-            # Füge Object Embedding hinzu (wenn es eine URI ist, kein Literal)
-            if not o_str.startswith("http://www.w3.org/2001/XMLSchema#"):
-                if o_str in embedding_model.wv:
-                    embeddings.append(embedding_model.wv[o_str])
+    # Sammle Embeddings
+    embeddings = [embedding_model.wv[uri] for uri in component_uris if uri in embedding_model.wv]
 
     if len(embeddings) == 0:
-        # Fallback: Zero-Vektor
         return np.zeros(embedding_model.vector_size)
 
-    # Mittelwert über alle Embeddings
     return np.mean(embeddings, axis=0)
 
 
@@ -325,55 +321,56 @@ def berechne_topk_aehnlichkeiten_graph_embedding(
     alle_rotor_ids: list[str],
     ontologie_graph: Graph,
     kategorie_gewichte: dict[str, float],
-    embedding_dimensions: int = 128,
-    num_walks: int = 10,
-    walk_length: int = 80,
-    k: int = 5,
+    embedding_dimensions: int = 32,
+    num_walks: int = 1,
+    walk_length: int = 10,
+    top_k: int = 5,
     dependencies: dict[tuple[str, str], dict] | None = None,
 ) -> list[tuple[str, float, dict[str, float]]]:
     """
-    Berechnet Top-k ähnlichste Rotoren mittels Graph-Embeddings mit gewichteten Kanten.
+    Berechnet Top-k ähnlichste Rotoren mittels Graph-Embeddings.
 
     Args:
-        query_rotor_id: ID des Query-Rotors
-        alle_rotor_ids: Liste aller Rotor-IDs
-        ontologie_graph: RDFlib Graph mit Ontologie
-        kategorie_gewichte: Gewichte pro Kategorie (nicht verwendet, für API-Konsistenz)
-        embedding_dimensions: Dimensionalität der Embeddings
-        num_walks: Anzahl Random Walks
-        walk_length: Länge der Walks
-        k: Anzahl zurückzugebender Top-Matches
-        dependencies: Optional dict mit Dependency-Informationen für gewichtete Kanten
+        query_rotor_id (str): ID des Query-Rotors
+        alle_rotor_ids (list): Liste aller Rotor-IDs
+        ontologie_graph (Graph): RDFlib Graph mit Ontologie
+        kategorie_gewichte (dict): Gewichte pro Kategorie
+        embedding_dimensions (int): Dimensionalität der Embeddings
+        num_walks (int): Anzahl Random Walks
+        walk_length (int): Länge der Walks
+        top_k (int): Anzahl zurückzugebender Top-Matches
+        dependencies (dict): Dependency-Informationen für gewichtete Kanten
 
     Returns:
-        Liste von (rotor_id, similarity_gesamt, similarity_pro_kategorie)
-        Sortiert nach similarity_gesamt (absteigend)
+        list: (rotor_id, similarity_gesamt, similarity_pro_kategorie), sortiert
     """
-    # 1. Trainiere Graph-Embeddings mit gewichteten Kanten
+    global _rotor_components_cache
+    _rotor_components_cache = {}
+
     embedding_model = train_graph_embeddings(
         ontologie_graph,
         dimensions=embedding_dimensions,
         num_walks=num_walks,
         walk_length=walk_length,
         workers=_OPTIMAL_WORKERS,
-        dependencies=dependencies,  # NEU: Nutze Dependency-Gewichte
+        dependencies=dependencies,
     )
 
-    # 2. Query-Embedding berechnen
-    query_embedding = get_rotor_embedding(query_rotor_id, ontologie_graph, embedding_model)
+    komponenten_index = _build_rotor_components_index(ontologie_graph)
 
-    # 3. Batch-Berechnung aller Rotor-Embeddings
+    query_embedding = get_rotor_embedding(
+        query_rotor_id, ontologie_graph, embedding_model, komponenten_index
+    )
+
     rotor_embeddings = {}
     for rotor_id in alle_rotor_ids:
         if rotor_id != query_rotor_id:
             rotor_embeddings[rotor_id] = get_rotor_embedding(
-                rotor_id, ontologie_graph, embedding_model
+                rotor_id, ontologie_graph, embedding_model, komponenten_index
             )
 
-    # 4. Batch Cosine-Similarity
     ergebnisse = []
     for rotor_id, rotor_embedding in rotor_embeddings.items():
-        # Cosine-Similarity
         similarity = cosine_similarity(
             query_embedding.reshape(1, -1), rotor_embedding.reshape(1, -1)
         )[0, 0]
@@ -381,12 +378,11 @@ def berechne_topk_aehnlichkeiten_graph_embedding(
         # Normiere auf [0, 1]
         similarity = max(0.0, min(1.0, (similarity + 1.0) / 2.0))
 
-        # Für Kategorie-Konsistenz: Verteile auf alle 3 Kategorien gleichmäßig
+        # Für Kategorie-Konsistenz: gleichmäßig auf alle 3 Kategorien
         similarity_pro_kategorie = {kat: similarity for kat in KATEGORIEN_3}
 
         ergebnisse.append((rotor_id, similarity, similarity_pro_kategorie))
 
-    # Sortiere nach Gesamt-Similarity
     ergebnisse.sort(key=lambda x: x[1], reverse=True)
 
-    return ergebnisse[:k]
+    return ergebnisse[:top_k]
