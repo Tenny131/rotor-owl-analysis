@@ -133,5 +133,5 @@ Endpoint konfigurieren in `src/rotor_owl/konfiguration.py`:
 ```python
 FUSEKI_ENDPOINT_STANDARD = "http://localhost:3030/rotors/sparql"
 ```
-test2
+test22
 ---
