@@ -12,6 +12,7 @@ from rotor_owl.daten.feature_fetcher import (
     build_numeric_stats,
     fetch_component_dependencies,
 )
+from rotor_owl.daten.json_parser import fetch_all_features_from_json
 from rotor_owl.methoden.pca_aehnlichkeit import (
     build_pca_embeddings,
     berechne_topk_aehnlichkeiten_pca,
@@ -56,6 +57,7 @@ from rdflib import Graph
 # Validation
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.stats import spearmanr
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_score
 
@@ -70,10 +72,22 @@ st.title("🔍 Rotor-Ähnlichkeitsanalyse")
 with st.sidebar:
     st.header("Einstellungen")
 
-    endpoint_url = st.text_input("Fuseki SPARQL Endpoint", value=FUSEKI_ENDPOINT_STANDARD)
+    datenquelle = st.radio(
+        "Datenquelle",
+        options=["Generiert (Fuseki/SPARQL)", "Realdaten (JSON)"],
+        index=0,
+        help="Generiert: synthetische Daten aus Fuseki. Realdaten: 230 echte WVSC-Rotoren aus JSON.",
+    )
+    ist_realdaten = datenquelle == "Realdaten (JSON)"
+
+    endpoint_url = FUSEKI_ENDPOINT_STANDARD
+    if not ist_realdaten:
+        endpoint_url = st.text_input("Fuseki SPARQL Endpoint", value=FUSEKI_ENDPOINT_STANDARD)
 
     # Button zum Laden der Ontologie und Features (einmalig)
-    if st.button("📥 Daten laden", help="Lädt Ontologie-Graph und Features von Fuseki (einmalig)"):
+    if not ist_realdaten and st.button(
+        "📥 Daten laden", help="Lädt Ontologie-Graph und Features von Fuseki (einmalig)"
+    ):
         with st.spinner("Lade Ontologie-Graph von Fuseki..."):
             construct_query = """
             CONSTRUCT { ?s ?p ?o }
@@ -235,21 +249,35 @@ with st.sidebar:
     }
 
     st.divider()
-    daten_neuladen = st.button("Daten neu laden (Fuseki erneut abfragen)")
+    if not ist_realdaten:
+        daten_neuladen = st.button("Daten neu laden (Fuseki erneut abfragen)")
+    else:
+        daten_neuladen = False
 
 
 if daten_neuladen:
     fetch_all_features.clear()
 
 
-# Daten laden
-try:
-    with st.spinner("Lade Features aus Fuseki..."):
-        features_by_rotor = fetch_all_features(endpoint_url)
-        dependencies = fetch_component_dependencies(endpoint_url)
-except Exception as fehler:
-    st.error(f"Fuseki-Abfrage fehlgeschlagen: {fehler}")
-    st.stop()
+# Daten laden – je nach Datenquelle
+if ist_realdaten:
+    with st.spinner("Lade Realdaten aus JSON-Dateien..."):
+        features_by_rotor = fetch_all_features_from_json()
+        dependencies = {}  # Realdaten haben keine Ontologie-Dependencies
+    st.sidebar.success(f"✅ {len(features_by_rotor)} Rotoren aus JSON geladen")
+else:
+    try:
+        with st.spinner("Lade Features aus Fuseki..."):
+            features_by_rotor = fetch_all_features(endpoint_url)
+            dependencies = fetch_component_dependencies(endpoint_url)
+    except Exception as fehler:
+        st.error(f"Fuseki-Abfrage fehlgeschlagen: {fehler}")
+        st.stop()
+
+# Sofort in session_state speichern (fuer Matrix-Validierung etc.)
+st.session_state["features_by_rotor"] = features_by_rotor
+st.session_state["numeric_stats"] = build_numeric_stats(features_by_rotor)
+st.session_state["daten_geladen"] = True
 
 
 # Auto-Gewichte berechnen wenn aktiviert
@@ -681,358 +709,657 @@ st.header("📊 Methoden-Validierung")
 
 # Button fuer Live-Validierung mit vollstaendigen Matrizen
 if st.button("🔬 Vollständige Matrix-Validierung (alle Rotor-Paare)", type="secondary"):
-    if "features_by_rotor" not in st.session_state:
-        st.error("Bitte zuerst auf **📥 Daten laden** in der Sidebar klicken")
-    else:
-        with st.spinner("Berechne vollständige Similarity-Matrizen für alle Methoden..."):
-            features_by_rotor = st.session_state["features_by_rotor"]
-            numeric_stats = st.session_state["numeric_stats"]
-            rotor_ids = sorted(features_by_rotor.keys())
-            n_rotors = len(rotor_ids)
+    with st.spinner("Berechne vollständige Similarity-Matrizen für alle Methoden..."):
+        features_by_rotor = st.session_state["features_by_rotor"]
+        numeric_stats = st.session_state["numeric_stats"]
+        rotor_ids = sorted(features_by_rotor.keys())
+        n_rotors = len(rotor_ids)
 
-            st.info(
-                f"📊 Berechne {n_rotors}×{n_rotors} = {n_rotors**2} Similarity-Werte für jede Methode..."
+        datenquelle_label = "Realdaten (JSON)" if ist_realdaten else "Generiert (Fuseki)"
+
+        st.info(
+            f"📊 Berechne {n_rotors}×{n_rotors} = {n_rotors**2} Similarity-Werte für jede Methode "
+            f"({datenquelle_label})..."
+        )
+
+        # Nutze UI-Einstellungen für Validierung
+        val_gewichte = gewichtung_pro_kategorie
+        val_latent_dim = latent_dim
+        val_n_clusters = n_clusters
+
+        # Container für vollständige Matrizen
+        similarity_matrices = {}
+
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        # 1. REGELBASIERT - Vollständige Matrix
+        status_text.text(f"1/6: Regelbasiert (0/{n_rotors} Rotoren)...")
+        regelbasiert_matrix = np.ones((n_rotors, n_rotors))
+        for i, query_r in enumerate(rotor_ids):
+            ergebnisse = berechne_topk_aehnlichkeiten(
+                query_r,
+                rotor_ids,
+                features_by_rotor,
+                numeric_stats,
+                val_gewichte,
+                top_k=len(rotor_ids),
             )
+            for rotor_id, sim, _ in ergebnisse:
+                j = rotor_ids.index(rotor_id)
+                regelbasiert_matrix[i, j] = sim
+            if i % 10 == 0:
+                status_text.text(f"1/6: Regelbasiert ({i}/{n_rotors} Rotoren)...")
+        similarity_matrices["Regelbasiert"] = regelbasiert_matrix
+        progress_bar.progress(1 / 6)
 
-            # Nutze UI-Einstellungen für Validierung
-            val_gewichte = gewichtung_pro_kategorie
-            val_latent_dim = latent_dim
-            val_n_clusters = n_clusters
-
-            # Container für vollständige Matrizen
-            similarity_matrices = {}
-
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-
-            # 1. REGELBASIERT - Vollständige Matrix
-            status_text.text(f"1/6: Regelbasiert (0/{n_rotors} Rotoren)...")
-            regelbasiert_matrix = np.ones((n_rotors, n_rotors))
-            for i, query_r in enumerate(rotor_ids):
-                ergebnisse = berechne_topk_aehnlichkeiten(
-                    query_r,
-                    rotor_ids,
-                    features_by_rotor,
-                    numeric_stats,
-                    val_gewichte,
-                    top_k=len(rotor_ids),
-                )
-                for rotor_id, sim, _ in ergebnisse:
-                    j = rotor_ids.index(rotor_id)
-                    regelbasiert_matrix[i, j] = sim
-                if i % 10 == 0:
-                    status_text.text(f"1/6: Regelbasiert ({i}/{n_rotors} Rotoren)...")
-            similarity_matrices["Regelbasiert"] = regelbasiert_matrix
-            progress_bar.progress(1 / 6)
-
-            # 2. k-NN - Vollständige Matrix
-            status_text.text(f"2/6: k-NN (0/{n_rotors} Rotoren)...")
-            knn_emb = build_knn_embeddings(features_by_rotor, numeric_stats)
-            knn_matrix = np.ones((n_rotors, n_rotors))
-            for i, query_r in enumerate(rotor_ids):
-                ergebnisse = berechne_topk_aehnlichkeiten_knn(
-                    query_r, rotor_ids, knn_emb, val_gewichte, top_k=len(rotor_ids)
-                )
-                for item in ergebnisse:
-                    rotor_id, sim = item[0], item[1]
-                    j = rotor_ids.index(rotor_id)
-                    knn_matrix[i, j] = sim
-                if i % 10 == 0:
-                    status_text.text(f"2/6: k-NN ({i}/{n_rotors} Rotoren)...")
-            similarity_matrices["k-NN"] = knn_matrix
-            progress_bar.progress(2 / 6)
-
-            # 3. PCA - Vollständige Matrix
-            status_text.text(f"3/6: PCA (0/{n_rotors} Rotoren)...")
-            pca_emb = build_pca_embeddings(
-                features_by_rotor, numeric_stats, latent_dim=val_latent_dim
+        # 2. k-NN - Vollständige Matrix
+        status_text.text(f"2/6: k-NN (0/{n_rotors} Rotoren)...")
+        knn_emb = build_knn_embeddings(features_by_rotor, numeric_stats)
+        knn_matrix = np.ones((n_rotors, n_rotors))
+        for i, query_r in enumerate(rotor_ids):
+            ergebnisse = berechne_topk_aehnlichkeiten_knn(
+                query_r, rotor_ids, knn_emb, val_gewichte, top_k=len(rotor_ids)
             )
-            pca_matrix = np.ones((n_rotors, n_rotors))
-            for i, query_r in enumerate(rotor_ids):
-                ergebnisse = berechne_topk_aehnlichkeiten_pca(
-                    query_r, rotor_ids, pca_emb, val_gewichte, top_k=len(rotor_ids)
-                )
-                for item in ergebnisse:
-                    rotor_id, sim = item[0], item[1]
-                    j = rotor_ids.index(rotor_id)
-                    pca_matrix[i, j] = sim
-                if i % 10 == 0:
-                    status_text.text(f"3/6: PCA ({i}/{n_rotors} Rotoren)...")
-            similarity_matrices["PCA"] = pca_matrix
-            progress_bar.progress(3 / 6)
+            for item in ergebnisse:
+                rotor_id, sim = item[0], item[1]
+                j = rotor_ids.index(rotor_id)
+                knn_matrix[i, j] = sim
+            if i % 10 == 0:
+                status_text.text(f"2/6: k-NN ({i}/{n_rotors} Rotoren)...")
+        similarity_matrices["k-NN"] = knn_matrix
+        progress_bar.progress(2 / 6)
 
-            # 4. Autoencoder - Vollständige Matrix
-            status_text.text(f"4/6: Autoencoder (0/{n_rotors} Rotoren)...")
-            ae_emb = build_autoencoder_embeddings(
-                features_by_rotor, numeric_stats, latent_dim=val_latent_dim
+        # 3. PCA - Vollständige Matrix
+        status_text.text(f"3/6: PCA (0/{n_rotors} Rotoren)...")
+        pca_emb = build_pca_embeddings(features_by_rotor, numeric_stats, latent_dim=val_latent_dim)
+        pca_matrix = np.ones((n_rotors, n_rotors))
+        for i, query_r in enumerate(rotor_ids):
+            ergebnisse = berechne_topk_aehnlichkeiten_pca(
+                query_r, rotor_ids, pca_emb, val_gewichte, top_k=len(rotor_ids)
             )
-            ae_matrix = np.ones((n_rotors, n_rotors))
-            for i, query_r in enumerate(rotor_ids):
-                ergebnisse = berechne_topk_aehnlichkeiten_autoencoder(
-                    query_r, rotor_ids, ae_emb, val_gewichte, top_k=len(rotor_ids)
-                )
-                for item in ergebnisse:
-                    rotor_id, sim = item[0], item[1]
-                    j = rotor_ids.index(rotor_id)
-                    ae_matrix[i, j] = sim
-                if i % 10 == 0:
-                    status_text.text(f"4/6: Autoencoder ({i}/{n_rotors} Rotoren)...")
-            similarity_matrices["Autoencoder"] = ae_matrix
-            progress_bar.progress(4 / 6)
+            for item in ergebnisse:
+                rotor_id, sim = item[0], item[1]
+                j = rotor_ids.index(rotor_id)
+                pca_matrix[i, j] = sim
+            if i % 10 == 0:
+                status_text.text(f"3/6: PCA ({i}/{n_rotors} Rotoren)...")
+        similarity_matrices["PCA"] = pca_matrix
+        progress_bar.progress(3 / 6)
 
-            # 5. K-Means - Vollständige Matrix
-            status_text.text(f"5/6: K-Means (0/{n_rotors} Rotoren)...")
-            kmeans_matrix = np.ones((n_rotors, n_rotors))
-            for i, query_r in enumerate(rotor_ids):
-                ergebnisse = berechne_topk_aehnlichkeiten_kmeans(
-                    query_r,
-                    rotor_ids,
-                    features_by_rotor,
-                    numeric_stats,
-                    val_gewichte,
-                    n_clusters=val_n_clusters,
-                    top_k=len(rotor_ids),
-                )
-                for item in ergebnisse:
-                    rotor_id, sim = item[0], item[1]
-                    j = rotor_ids.index(rotor_id)
-                    kmeans_matrix[i, j] = sim
-                if i % 10 == 0:
-                    status_text.text(f"5/6: K-Means ({i}/{n_rotors} Rotoren)...")
-            similarity_matrices["K-Means"] = kmeans_matrix
-            progress_bar.progress(5 / 6)
+        # 4. Autoencoder - Vollständige Matrix
+        status_text.text(f"4/6: Autoencoder (0/{n_rotors} Rotoren)...")
+        ae_emb = build_autoencoder_embeddings(
+            features_by_rotor, numeric_stats, latent_dim=val_latent_dim
+        )
+        ae_matrix = np.ones((n_rotors, n_rotors))
+        for i, query_r in enumerate(rotor_ids):
+            ergebnisse = berechne_topk_aehnlichkeiten_autoencoder(
+                query_r, rotor_ids, ae_emb, val_gewichte, top_k=len(rotor_ids)
+            )
+            for item in ergebnisse:
+                rotor_id, sim = item[0], item[1]
+                j = rotor_ids.index(rotor_id)
+                ae_matrix[i, j] = sim
+            if i % 10 == 0:
+                status_text.text(f"4/6: Autoencoder ({i}/{n_rotors} Rotoren)...")
+        similarity_matrices["Autoencoder"] = ae_matrix
+        progress_bar.progress(4 / 6)
 
-            # 6. Hybrid - verwendet die UI-Einstellungen (hybrid_methode_1 + hybrid_methode_2)
-            # Mapping von UI-Namen zu Matrix-Keys
-            methoden_matrix_mapping = {
-                "Regelbasiert": "Regelbasiert",
-                "k-Nearest Neighbors": "k-NN",
-                "PCA-Embedding": "PCA",
-                "Autoencoder": "Autoencoder",
-                "K-Means Clustering": "K-Means",
+        # 5. K-Means - Vollständige Matrix
+        status_text.text(f"5/6: K-Means (0/{n_rotors} Rotoren)...")
+        kmeans_matrix = np.ones((n_rotors, n_rotors))
+        for i, query_r in enumerate(rotor_ids):
+            ergebnisse = berechne_topk_aehnlichkeiten_kmeans(
+                query_r,
+                rotor_ids,
+                features_by_rotor,
+                numeric_stats,
+                val_gewichte,
+                n_clusters=val_n_clusters,
+                top_k=len(rotor_ids),
+            )
+            for item in ergebnisse:
+                rotor_id, sim = item[0], item[1]
+                j = rotor_ids.index(rotor_id)
+                kmeans_matrix[i, j] = sim
+            if i % 10 == 0:
+                status_text.text(f"5/6: K-Means ({i}/{n_rotors} Rotoren)...")
+        similarity_matrices["K-Means"] = kmeans_matrix
+        progress_bar.progress(5 / 6)
+
+        # 6. Hybrid - verwendet die UI-Einstellungen (hybrid_methode_1 + hybrid_methode_2)
+        # Mapping von UI-Namen zu Matrix-Keys
+        methoden_matrix_mapping = {
+            "Regelbasiert": "Regelbasiert",
+            "k-Nearest Neighbors": "k-NN",
+            "PCA-Embedding": "PCA",
+            "Autoencoder": "Autoencoder",
+            "K-Means Clustering": "K-Means",
+        }
+
+        matrix_key_1 = methoden_matrix_mapping.get(hybrid_methode_1, "PCA")
+        matrix_key_2 = methoden_matrix_mapping.get(hybrid_methode_2, "K-Means")
+
+        status_text.text(
+            f"6/6: Hybrid ({hybrid_gewicht_1:.0%} {matrix_key_1} + {hybrid_gewicht_2:.0%} {matrix_key_2})..."
+        )
+
+        # Berechne gewichtete Kombination der ausgewählten Matrizen
+        matrix_1 = similarity_matrices.get(matrix_key_1, pca_matrix)
+        matrix_2 = similarity_matrices.get(matrix_key_2, kmeans_matrix)
+        hybrid_matrix = hybrid_gewicht_1 * matrix_1 + hybrid_gewicht_2 * matrix_2
+
+        similarity_matrices["Hybrid"] = hybrid_matrix
+        progress_bar.progress(6 / 6)
+
+        status_text.text("Analysiere Matrizen...")
+
+        # Berechne Metriken für jede Methode
+        validation_results = {}
+
+        for method_name, sim_matrix in similarity_matrices.items():
+            # Extrahiere obere Dreiecks-Matrix (ohne Diagonale) für echte Similarities
+            triu_indices = np.triu_indices_from(sim_matrix, k=1)
+            sim_values = sim_matrix[triu_indices]
+
+            validation_results[method_name] = {
+                "mean": float(np.mean(sim_values)),
+                "std": float(np.std(sim_values)),
+                "min": float(np.min(sim_values)),
+                "max": float(np.max(sim_values)),
+                "range": float(np.max(sim_values) - np.min(sim_values)),
+                "cv": float(np.std(sim_values) / np.mean(sim_values))
+                if np.mean(sim_values) > 0
+                else 0,
             }
 
-            matrix_key_1 = methoden_matrix_mapping.get(hybrid_methode_1, "PCA")
-            matrix_key_2 = methoden_matrix_mapping.get(hybrid_methode_2, "K-Means")
+            # Silhouette Score
+            try:
+                dist_matrix = np.clip(1 - sim_matrix, 0, 1)
+                np.fill_diagonal(dist_matrix, 0)
 
-            status_text.text(
-                f"6/6: Hybrid ({hybrid_gewicht_1:.0%} {matrix_key_1} + {hybrid_gewicht_2:.0%} {matrix_key_2})..."
-            )
-
-            # Berechne gewichtete Kombination der ausgewählten Matrizen
-            matrix_1 = similarity_matrices.get(matrix_key_1, pca_matrix)
-            matrix_2 = similarity_matrices.get(matrix_key_2, kmeans_matrix)
-            hybrid_matrix = hybrid_gewicht_1 * matrix_1 + hybrid_gewicht_2 * matrix_2
-
-            similarity_matrices["Hybrid"] = hybrid_matrix
-            progress_bar.progress(6 / 6)
-
-            status_text.text("Analysiere Matrizen...")
-
-            # Berechne Metriken für jede Methode
-            validation_results = {}
-
-            for method_name, sim_matrix in similarity_matrices.items():
-                # Extrahiere obere Dreiecks-Matrix (ohne Diagonale) für echte Similarities
-                triu_indices = np.triu_indices_from(sim_matrix, k=1)
-                sim_values = sim_matrix[triu_indices]
-
-                validation_results[method_name] = {
-                    "mean": float(np.mean(sim_values)),
-                    "std": float(np.std(sim_values)),
-                    "min": float(np.min(sim_values)),
-                    "max": float(np.max(sim_values)),
-                    "range": float(np.max(sim_values) - np.min(sim_values)),
-                    "cv": float(np.std(sim_values) / np.mean(sim_values))
-                    if np.mean(sim_values) > 0
-                    else 0,
-                }
-
-                # Silhouette Score
-                try:
-                    dist_matrix = np.clip(1 - sim_matrix, 0, 1)
-                    np.fill_diagonal(dist_matrix, 0)
-
-                    if n_rotors > 5:
-                        clustering = AgglomerativeClustering(
-                            n_clusters=5, metric="precomputed", linkage="average"
-                        )
-                        labels = clustering.fit_predict(dist_matrix)
-                        sil_score = silhouette_score(dist_matrix, labels, metric="precomputed")
-                        validation_results[method_name]["silhouette"] = float(sil_score)
-                    else:
-                        validation_results[method_name]["silhouette"] = 0.0
-                except Exception:
+                if n_rotors > 5:
+                    clustering = AgglomerativeClustering(
+                        n_clusters=5, metric="precomputed", linkage="average"
+                    )
+                    labels = clustering.fit_predict(dist_matrix)
+                    sil_score = silhouette_score(dist_matrix, labels, metric="precomputed")
+                    validation_results[method_name]["silhouette"] = float(sil_score)
+                else:
                     validation_results[method_name]["silhouette"] = 0.0
+            except Exception:
+                validation_results[method_name]["silhouette"] = 0.0
 
-            progress_bar.empty()
-            status_text.empty()
+        progress_bar.empty()
+        status_text.empty()
 
-            # Erstelle Visualisierung
-            methods = list(validation_results.keys())
-            colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#e377c2"]
+        # Erstelle Visualisierung
+        methods = list(validation_results.keys())
+        colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#e377c2"]
 
-            fig, axes = plt.subplots(2, 3, figsize=(16, 10))
-            fig.suptitle(
-                f"Matrix-Validierung ({n_rotors} Rotoren, {n_rotors*(n_rotors-1)//2} Paare) - 6 Methoden",
-                fontsize=14,
+        fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+        fig.suptitle(
+            f"Matrix-Validierung ({n_rotors} Rotoren, {n_rotors*(n_rotors-1)//2} Paare) – {datenquelle_label}",
+            fontsize=14,
+            fontweight="bold",
+        )
+
+        # Plot 1: Histogramme
+        ax = axes[0, 0]
+        for i, method in enumerate(methods):
+            sim_matrix = similarity_matrices[method]
+            triu_indices = np.triu_indices_from(sim_matrix, k=1)
+            sim_vals = sim_matrix[triu_indices]
+            ax.hist(sim_vals, bins=30, alpha=0.5, label=method, color=colors[i % len(colors)])
+        ax.set_xlabel("Similarity")
+        ax.set_ylabel("Häufigkeit")
+        ax.set_title("Similarity Verteilungen (alle Paare)")
+        ax.legend(fontsize=7)
+        ax.grid(True, alpha=0.3)
+
+        # Plot 2: Range
+        ax = axes[0, 1]
+        ranges = [validation_results[m]["range"] * 100 for m in methods]
+        bars = ax.bar(methods, ranges, color=colors[: len(methods)], alpha=0.8, edgecolor="black")
+        ax.set_ylabel("Range (%)")
+        ax.set_title("Range (Höher = Besser)")
+        ax.tick_params(axis="x", rotation=45, labelsize=8)
+        ax.grid(True, alpha=0.3, axis="y")
+        for bar, val in zip(bars, ranges):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 1,
+                f"{val:.1f}",
+                ha="center",
+                va="bottom",
+                fontsize=7,
                 fontweight="bold",
             )
 
-            # Plot 1: Histogramme
-            ax = axes[0, 0]
-            for i, method in enumerate(methods):
-                sim_matrix = similarity_matrices[method]
-                triu_indices = np.triu_indices_from(sim_matrix, k=1)
-                sim_vals = sim_matrix[triu_indices]
-                ax.hist(sim_vals, bins=30, alpha=0.5, label=method, color=colors[i % len(colors)])
-            ax.set_xlabel("Similarity")
-            ax.set_ylabel("Häufigkeit")
-            ax.set_title("Similarity Verteilungen (alle Paare)")
-            ax.legend(fontsize=7)
-            ax.grid(True, alpha=0.3)
-
-            # Plot 2: Range
-            ax = axes[0, 1]
-            ranges = [validation_results[m]["range"] * 100 for m in methods]
-            bars = ax.bar(
-                methods, ranges, color=colors[: len(methods)], alpha=0.8, edgecolor="black"
+        # Plot 3: CV
+        ax = axes[0, 2]
+        cvs = [validation_results[m]["cv"] * 100 for m in methods]
+        bars = ax.bar(methods, cvs, color=colors[: len(methods)], alpha=0.8, edgecolor="black")
+        ax.set_ylabel("CV (%)")
+        ax.set_title("Variationskoeffizient (Höher = Besser)")
+        ax.tick_params(axis="x", rotation=45, labelsize=8)
+        ax.grid(True, alpha=0.3, axis="y")
+        for bar, val in zip(bars, cvs):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.5,
+                f"{val:.1f}",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+                fontweight="bold",
             )
-            ax.set_ylabel("Range (%)")
-            ax.set_title("Range (Höher = Besser)")
-            ax.tick_params(axis="x", rotation=45, labelsize=8)
-            ax.grid(True, alpha=0.3, axis="y")
-            for bar, val in zip(bars, ranges):
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() + 1,
-                    f"{val:.1f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=7,
-                    fontweight="bold",
-                )
 
-            # Plot 3: CV
-            ax = axes[0, 2]
-            cvs = [validation_results[m]["cv"] * 100 for m in methods]
-            bars = ax.bar(methods, cvs, color=colors[: len(methods)], alpha=0.8, edgecolor="black")
-            ax.set_ylabel("CV (%)")
-            ax.set_title("Variationskoeffizient (Höher = Besser)")
-            ax.tick_params(axis="x", rotation=45, labelsize=8)
-            ax.grid(True, alpha=0.3, axis="y")
-            for bar, val in zip(bars, cvs):
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() + 0.5,
-                    f"{val:.1f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=7,
-                    fontweight="bold",
-                )
-
-            # Plot 4: Silhouette
-            ax = axes[1, 0]
-            sils = [validation_results[m]["silhouette"] for m in methods]
-            bars = ax.bar(methods, sils, color=colors[: len(methods)], alpha=0.8, edgecolor="black")
-            ax.set_ylabel("Silhouette Score")
-            ax.set_title("Cluster-Qualität (Höher = Besser)")
-            ax.tick_params(axis="x", rotation=45, labelsize=8)
-            ax.grid(True, alpha=0.3, axis="y")
-            for bar, val in zip(bars, sils):
-                ax.text(
-                    bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() + 0.01,
-                    f"{val:.2f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=7,
-                    fontweight="bold",
-                )
-
-            # Plot 5: Min/Mean/Max
-            ax = axes[1, 1]
-            x = np.arange(len(methods))
-            width = 0.25
-            mins = [validation_results[m]["min"] for m in methods]
-            means = [validation_results[m]["mean"] for m in methods]
-            maxs = [validation_results[m]["max"] for m in methods]
-            ax.bar(x - width, mins, width, label="Min", color="lightcoral", edgecolor="black")
-            ax.bar(x, means, width, label="Mean", color="steelblue", edgecolor="black")
-            ax.bar(x + width, maxs, width, label="Max", color="lightgreen", edgecolor="black")
-            ax.set_xticks(x)
-            ax.set_xticklabels(methods, rotation=45, ha="right", fontsize=7)
-            ax.set_ylabel("Similarity")
-            ax.set_title("Min / Mean / Max")
-            ax.legend(fontsize=7)
-            ax.grid(True, alpha=0.3, axis="y")
-            ax.set_ylim(0, 1.05)
-
-            # Plot 6: Tabelle
-            ax = axes[1, 2]
-            ax.axis("off")
-            table_data = []
-            for m in methods:
-                r = validation_results[m]
-                table_data.append(
-                    [m, f"{r['range']*100:.1f}%", f"{r['cv']*100:.1f}%", f"{r['silhouette']:.3f}"]
-                )
-            table = ax.table(
-                cellText=table_data,
-                colLabels=["Methode", "Range", "CV", "Silh."],
-                loc="center",
-                cellLoc="center",
+        # Plot 4: Silhouette
+        ax = axes[1, 0]
+        sils = [validation_results[m]["silhouette"] for m in methods]
+        bars = ax.bar(methods, sils, color=colors[: len(methods)], alpha=0.8, edgecolor="black")
+        ax.set_ylabel("Silhouette Score")
+        ax.set_title("Cluster-Qualität (Höher = Besser)")
+        ax.tick_params(axis="x", rotation=45, labelsize=8)
+        ax.grid(True, alpha=0.3, axis="y")
+        for bar, val in zip(bars, sils):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.01,
+                f"{val:.2f}",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+                fontweight="bold",
             )
-            table.auto_set_font_size(False)
-            table.set_fontsize(9)
-            table.scale(1.2, 1.8)
-            ax.set_title("Zusammenfassung", fontweight="bold", pad=20)
 
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close()
+        # Plot 5: Min/Mean/Max
+        ax = axes[1, 1]
+        x = np.arange(len(methods))
+        width = 0.25
+        mins = [validation_results[m]["min"] for m in methods]
+        means = [validation_results[m]["mean"] for m in methods]
+        maxs = [validation_results[m]["max"] for m in methods]
+        ax.bar(x - width, mins, width, label="Min", color="lightcoral", edgecolor="black")
+        ax.bar(x, means, width, label="Mean", color="steelblue", edgecolor="black")
+        ax.bar(x + width, maxs, width, label="Max", color="lightgreen", edgecolor="black")
+        ax.set_xticks(x)
+        ax.set_xticklabels(methods, rotation=45, ha="right", fontsize=7)
+        ax.set_ylabel("Similarity")
+        ax.set_title("Min / Mean / Max")
+        ax.legend(fontsize=7)
+        ax.grid(True, alpha=0.3, axis="y")
+        ax.set_ylim(0, 1.05)
 
-            # Beste Methoden
-            best_range = max(validation_results.items(), key=lambda x: x[1]["range"])
-            best_cv = max(validation_results.items(), key=lambda x: x[1]["cv"])
-            best_sil = max(validation_results.items(), key=lambda x: x[1]["silhouette"])
+        # Plot 6: Tabelle
+        ax = axes[1, 2]
+        ax.axis("off")
+        table_data = []
+        for m in methods:
+            r = validation_results[m]
+            table_data.append(
+                [m, f"{r['range']*100:.1f}%", f"{r['cv']*100:.1f}%", f"{r['silhouette']:.3f}"]
+            )
+        table = ax.table(
+            cellText=table_data,
+            colLabels=["Methode", "Range", "CV", "Silh."],
+            loc="center",
+            cellLoc="center",
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1.2, 1.8)
+        ax.set_title("Zusammenfassung", fontweight="bold", pad=20)
 
-            st.success(f"""
-            **Ergebnis der vollständigen Matrix-Validierung:**
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+
+        # Beste Methoden
+        best_range = max(validation_results.items(), key=lambda x: x[1]["range"])
+        best_cv = max(validation_results.items(), key=lambda x: x[1]["cv"])
+        best_sil = max(validation_results.items(), key=lambda x: x[1]["silhouette"])
+
+        st.success(f"""
+        **Ergebnis der vollständigen Matrix-Validierung:**
             
-            📊 **Datenbasis:** {n_rotors} Rotoren, {n_rotors*(n_rotors-1)//2} unique Rotor-Paare
+📊 **Datenbasis:** {n_rotors} Rotoren, {n_rotors*(n_rotors-1)//2} unique Rotor-Paare ({datenquelle_label})
             
-            - 🏆 **Beste Trennschärfe (Range):** {best_range[0]} ({best_range[1]['range']*100:.1f}%)
-            - 📈 **Höchste Variabilität (CV):** {best_cv[0]} ({best_cv[1]['cv']*100:.1f}%)
-            - ⭐ **Beste Cluster-Qualität (Silhouette):** {best_sil[0]} ({best_sil[1]['silhouette']:.3f})
-            """)
+        - 🏆 **Beste Trennschärfe (Range):** {best_range[0]} ({best_range[1]['range']*100:.1f}%)
+        - 📈 **Höchste Variabilität (CV):** {best_cv[0]} ({best_cv[1]['cv']*100:.1f}%)
+        - ⭐ **Beste Cluster-Qualität (Silhouette):** {best_sil[0]} ({best_sil[1]['silhouette']:.3f})
+        """)
 
-            # Zeige Details als Dataframe
-            df_results = pd.DataFrame(
-                [
-                    {
-                        "Methode": m,
-                        "Range (%)": f"{r['range']*100:.1f}",
-                        "CV (%)": f"{r['cv']*100:.1f}",
-                        "Silhouette": f"{r['silhouette']:.3f}",
-                        "Min": f"{r['min']:.3f}",
-                        "Mean": f"{r['mean']:.3f}",
-                        "Max": f"{r['max']:.3f}",
-                    }
-                    for m, r in validation_results.items()
-                ]
+        # Zeige Details als Dataframe
+        df_results = pd.DataFrame(
+            [
+                {
+                    "Methode": m,
+                    "Range (%)": f"{r['range']*100:.1f}",
+                    "CV (%)": f"{r['cv']*100:.1f}",
+                    "Silhouette": f"{r['silhouette']:.3f}",
+                    "Min": f"{r['min']:.3f}",
+                    "Mean": f"{r['mean']:.3f}",
+                    "Max": f"{r['max']:.3f}",
+                }
+                for m, r in validation_results.items()
+            ]
+        )
+
+        st.dataframe(df_results, width="stretch", hide_index=True)
+
+        # =============================================================
+        # Korrelationsanalyse: Spearman + Jaccard + Scatter
+        # =============================================================
+        st.subheader("🔗 Korrelationsanalyse vs. Regelbasiert")
+
+        referenz_name = "Regelbasiert"
+        ml_methoden_namen = [m for m in methods if m != referenz_name]
+        methoden_farben_map = {
+            "Regelbasiert": "#1f77b4",
+            "k-NN": "#ff7f0e",
+            "PCA": "#2ca02c",
+            "Autoencoder": "#d62728",
+            "K-Means": "#9467bd",
+            "Hybrid": "#e377c2",
+        }
+
+        # Obere Dreiecks-Vektoren extrahieren
+        triu_vektoren = {}
+        for m_name, m_matrix in similarity_matrices.items():
+            triu_idx = np.triu_indices_from(m_matrix, k=1)
+            triu_vektoren[m_name] = m_matrix[triu_idx]
+
+        # Spearman-Korrelation jede Methode vs. Regelbasiert
+        spearman_ergebnisse = {}
+        for m_name in ml_methoden_namen:
+            rho_val, p_val = spearmanr(
+                triu_vektoren[referenz_name],
+                triu_vektoren[m_name],
+            )
+            spearman_ergebnisse[m_name] = {"rho": rho_val, "p_wert": p_val}
+
+        # 6x6 paarweise Korrelationsmatrix
+        n_meth = len(methods)
+        korr_matrix = np.ones((n_meth, n_meth))
+        for mi in range(n_meth):
+            for mj in range(mi + 1, n_meth):
+                rho_val, _ = spearmanr(
+                    triu_vektoren[methods[mi]],
+                    triu_vektoren[methods[mj]],
+                )
+                korr_matrix[mi, mj] = rho_val
+                korr_matrix[mj, mi] = rho_val
+
+        # Jaccard Top-10 Overlap
+        jaccard_top_k = 10
+        referenz_sim_matrix = similarity_matrices[referenz_name]
+        jaccard_ergebnisse_ui = {}
+        for m_name, m_matrix in similarity_matrices.items():
+            if m_name == referenz_name:
+                continue
+            jac_summe = 0.0
+            for row_i in range(n_rotors):
+                ref_row = referenz_sim_matrix[row_i].copy()
+                ref_row[row_i] = -1.0
+                ref_topk = set(np.argsort(ref_row)[-jaccard_top_k:])
+                met_row = m_matrix[row_i].copy()
+                met_row[row_i] = -1.0
+                met_topk = set(np.argsort(met_row)[-jaccard_top_k:])
+                schnitt = len(ref_topk & met_topk)
+                verein = len(ref_topk | met_topk)
+                jac_summe += schnitt / verein if verein > 0 else 0.0
+            jaccard_ergebnisse_ui[m_name] = jac_summe / n_rotors
+
+        # --- Plot: Korrelationsanalyse (2x2) ---
+        fig_korr, axes_korr = plt.subplots(2, 2, figsize=(14, 11))
+        fig_korr.suptitle(
+            f"Korrelationsanalyse – Inhaltliche Validierung vs. {referenz_name}",
+            fontsize=14,
+            fontweight="bold",
+        )
+
+        # Subplot 1: Spearman rho Balken
+        ax_k = axes_korr[0, 0]
+        rho_vals = [spearman_ergebnisse[m]["rho"] for m in ml_methoden_namen]
+        farben_k = [methoden_farben_map.get(m, "gray") for m in ml_methoden_namen]
+        bars_k = ax_k.bar(ml_methoden_namen, rho_vals, color=farben_k, alpha=0.8, edgecolor="black")
+        ax_k.set_ylabel("Spearman ρ")
+        ax_k.set_title(f"Spearman-Korrelation vs. {referenz_name}")
+        ax_k.set_ylim(0, 1.05)
+        ax_k.tick_params(axis="x", rotation=45, labelsize=8)
+        ax_k.grid(True, alpha=0.3, axis="y")
+        for bar_k, val_k in zip(bars_k, rho_vals):
+            ax_k.text(
+                bar_k.get_x() + bar_k.get_width() / 2,
+                bar_k.get_height() + 0.02,
+                f"{val_k:.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                fontweight="bold",
             )
 
-            st.dataframe(df_results, width="stretch", hide_index=True)
+        # Subplot 2: 6x6 Heatmap
+        ax_k = axes_korr[0, 1]
+        im_k = ax_k.imshow(korr_matrix, cmap="RdYlGn", vmin=0.0, vmax=1.0, aspect="auto")
+        ax_k.set_xticks(range(n_meth))
+        ax_k.set_yticks(range(n_meth))
+        ax_k.set_xticklabels(methods, rotation=45, ha="right", fontsize=8)
+        ax_k.set_yticklabels(methods, fontsize=8)
+        ax_k.set_title("Paarweise Spearman-Korrelation")
+        for ci in range(n_meth):
+            for cj in range(n_meth):
+                txt_c = "white" if korr_matrix[ci, cj] < 0.5 else "black"
+                ax_k.text(
+                    cj,
+                    ci,
+                    f"{korr_matrix[ci, cj]:.2f}",
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    color=txt_c,
+                    fontweight="bold",
+                )
+        fig_korr.colorbar(im_k, ax=ax_k, shrink=0.8)
+
+        # Subplot 3: Jaccard Balken
+        ax_k = axes_korr[1, 0]
+        jac_namen = list(jaccard_ergebnisse_ui.keys())
+        jac_werte = [jaccard_ergebnisse_ui[m] for m in jac_namen]
+        farben_j = [methoden_farben_map.get(m, "gray") for m in jac_namen]
+        bars_j = ax_k.bar(jac_namen, jac_werte, color=farben_j, alpha=0.8, edgecolor="black")
+        ax_k.set_ylabel("Jaccard-Index")
+        ax_k.set_title(f"Top-{jaccard_top_k} Ranking-Overlap vs. {referenz_name}")
+        ax_k.set_ylim(0, 1.05)
+        ax_k.tick_params(axis="x", rotation=45, labelsize=8)
+        ax_k.grid(True, alpha=0.3, axis="y")
+        for bar_j, val_j in zip(bars_j, jac_werte):
+            ax_k.text(
+                bar_j.get_x() + bar_j.get_width() / 2,
+                bar_j.get_height() + 0.02,
+                f"{val_j:.3f}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                fontweight="bold",
+            )
+
+        # Subplot 4: Zusammenfassungs-Tabelle
+        ax_k = axes_korr[1, 1]
+        ax_k.axis("off")
+        tab_rows = []
+        for m in ml_methoden_namen:
+            rho_m = spearman_ergebnisse[m]["rho"]
+            p_m = spearman_ergebnisse[m]["p_wert"]
+            jac_m = jaccard_ergebnisse_ui.get(m, 0.0)
+            sig_m = "***" if p_m < 0.001 else "**" if p_m < 0.01 else "*" if p_m < 0.05 else "n.s."
+            tab_rows.append([m, f"{rho_m:.4f}", sig_m, f"{jac_m:.3f}"])
+        tab_k = ax_k.table(
+            cellText=tab_rows,
+            colLabels=["Methode", "Spearman ρ", "Signif.", f"Jaccard@{jaccard_top_k}"],
+            loc="center",
+            cellLoc="center",
+        )
+        tab_k.auto_set_font_size(False)
+        tab_k.set_fontsize(9)
+        tab_k.scale(1.3, 1.8)
+        ax_k.set_title("Zusammenfassung: Inhaltliche Validierung", fontweight="bold", pad=20)
+
+        plt.tight_layout()
+        st.pyplot(fig_korr)
+        plt.close(fig_korr)
+
+        # Legende: Signifikanzniveaus
+        n_paare = n_rotors * (n_rotors - 1) // 2
+        st.markdown(
+            f"""
+**Legende – Signifikanzniveaus (p-Wert):**
+
+| Symbol | Bedeutung | p-Wert |
+|:------:|-----------|--------|
+| \*\*\* | hochsignifikant | p < 0.001 |
+| \*\* | sehr signifikant | p < 0.01 |
+| \* | signifikant | p < 0.05 |
+| n.s. | nicht signifikant | p ≥ 0.05 |
+
+> **Signifikanz ≠ Stärke:** Die Signifikanz (p-Wert) sagt aus, ob eine Korrelation
+> *statistisch zufällig* sein könnte. Die **Stärke** (Spearman ρ) beschreibt dagegen,
+> *wie eng* der Zusammenhang ist. Bei großen Stichproben (hier {n_paare} Paare)
+> sind selbst schwache Korrelationen signifikant – deshalb ist die Effektstärke
+> das relevantere Maß (Cohen, 1988).
+>
+> **Interpretation nach Hinkle et al. (2003):**
+> |ρ| ≥ 0.90 = sehr stark, 0.70–0.89 = stark, 0.50–0.69 = moderat,
+> 0.30–0.49 = schwach, < 0.30 = vernachlässigbar.
+            """
+        )
+
+        # --- Plot: Scatter-Plots (2x3) ---
+        st.subheader("📊 Scatter-Plots: ML-Methoden vs. Regelbasiert")
+
+        fig_sc, axes_sc = plt.subplots(2, 3, figsize=(16, 10))
+        fig_sc.suptitle(
+            "Scatter-Plots: ML-Methoden vs. Regelbasiert (jeder Punkt = 1 Rotor-Paar)",
+            fontsize=14,
+            fontweight="bold",
+        )
+
+        referenz_vektor = triu_vektoren[referenz_name]
+
+        for sc_idx, sc_name in enumerate(ml_methoden_namen):
+            sc_row = sc_idx // 3
+            sc_col = sc_idx % 3
+            ax_sc = axes_sc[sc_row, sc_col]
+
+            methode_vektor = triu_vektoren[sc_name]
+            sc_rho = spearman_ergebnisse[sc_name]["rho"]
+            sc_farbe = methoden_farben_map.get(sc_name, "gray")
+
+            ax_sc.scatter(
+                referenz_vektor,
+                methode_vektor,
+                alpha=0.08,
+                s=3,
+                color=sc_farbe,
+                edgecolors="none",
+                rasterized=True,
+            )
+
+            koeff = np.polyfit(referenz_vektor, methode_vektor, 1)
+            x_line = np.linspace(0.0, 1.0, 100)
+            ax_sc.plot(
+                x_line,
+                np.polyval(koeff, x_line),
+                color="black",
+                linewidth=1.5,
+                linestyle="--",
+                alpha=0.8,
+            )
+            ax_sc.plot([0, 1], [0, 1], color="gray", linewidth=0.8, linestyle=":", alpha=0.5)
+
+            ax_sc.set_xlabel(referenz_name, fontsize=9)
+            ax_sc.set_ylabel(sc_name, fontsize=9)
+            ax_sc.set_title(f"{sc_name}  (ρ = {sc_rho:.3f})", fontsize=10, fontweight="bold")
+            ax_sc.set_xlim(0, 1.02)
+            ax_sc.set_ylim(0, 1.02)
+            ax_sc.set_aspect("equal")
+            ax_sc.grid(True, alpha=0.3)
+
+        # 6. Subplot: Stärke-Tabelle
+        ax_sc = axes_sc[1, 2]
+        ax_sc.axis("off")
+        sc_rows = []
+        for m in ml_methoden_namen:
+            r_val = spearman_ergebnisse[m]["rho"]
+            if r_val >= 0.7:
+                st_label = "stark"
+            elif r_val >= 0.4:
+                st_label = "moderat"
+            else:
+                st_label = "schwach"
+            sc_rows.append([m, f"{r_val:.4f}", st_label])
+        tab_sc = ax_sc.table(
+            cellText=sc_rows,
+            colLabels=["Methode", "Spearman ρ", "Stärke"],
+            loc="center",
+            cellLoc="center",
+        )
+        tab_sc.auto_set_font_size(False)
+        tab_sc.set_fontsize(9)
+        tab_sc.scale(1.3, 1.8)
+        ax_sc.set_title("Korrelationsstärke", fontweight="bold", pad=20)
+
+        plt.tight_layout()
+        st.pyplot(fig_sc)
+        plt.close(fig_sc)
+
+        # Beste Korrelation + Jaccard
+        best_rho_name = max(spearman_ergebnisse, key=lambda x: spearman_ergebnisse[x]["rho"])
+        best_jac_name = max(jaccard_ergebnisse_ui, key=lambda x: jaccard_ergebnisse_ui[x])
+
+        # Stärke-Klassifikation nach Hinkle et al. (2003)
+        zusammenfassung_zeilen = []
+        for m_name in ml_methoden_namen:
+            rho_m = spearman_ergebnisse[m_name]["rho"]
+            if abs(rho_m) >= 0.90:
+                staerke = "sehr stark"
+            elif abs(rho_m) >= 0.70:
+                staerke = "stark"
+            elif abs(rho_m) >= 0.50:
+                staerke = "moderat"
+            elif abs(rho_m) >= 0.30:
+                staerke = "schwach"
+            else:
+                staerke = "vernachlässigbar"
+            zusammenfassung_zeilen.append(f"- **{m_name}:** ρ = {rho_m:.4f} → **{staerke}**")
+
+        st.info(
+            f"🔗 **Höchste Korrelation mit Regelbasiert:** {best_rho_name} "
+            f"(ρ = {spearman_ergebnisse[best_rho_name]['rho']:.4f})\n\n"
+            f"🎯 **Bester Ranking-Overlap:** {best_jac_name} "
+            f"(Jaccard@{jaccard_top_k} = {jaccard_ergebnisse_ui[best_jac_name]:.3f})"
+        )
+        st.markdown(
+            "**Korrelationsstärke (Hinkle et al., 2003):**\n\n" + "\n".join(zusammenfassung_zeilen)
+        )
 
 with st.expander("📈 Vorberechnete Validierung (aus validate_results.py)", expanded=False):
     from pathlib import Path
 
-    validation_img = Path(__file__).parent.parent.parent / "data" / "similarity_validation.png"
-    if validation_img.exists():
-        st.image(
-            str(validation_img), caption="Similarity Validation - Alle 7 Methoden", width="stretch"
-        )
-    else:
-        st.warning("Validierungsbild nicht gefunden. Fuehre `python validate_results.py` aus.")
+    validierung_dir = Path(__file__).parent.parent.parent / "data"
+    validierung_bilder = [
+        ("validierung_statistik.png", "Statistische Kennzahlen"),
+        ("validierung_korrelation.png", "Korrelationsanalyse vs. Regelbasiert"),
+        ("validierung_scatter.png", "Scatter-Plots: ML vs. Regelbasiert"),
+    ]
+    bilder_gefunden = False
+    for dateiname, beschriftung in validierung_bilder:
+        bild_pfad = validierung_dir / dateiname
+        if bild_pfad.exists():
+            st.image(str(bild_pfad), caption=beschriftung, width="stretch")
+            bilder_gefunden = True
+    if not bilder_gefunden:
+        st.warning("Keine Validierungsbilder gefunden. Führe `python validate_results.py` aus.")

@@ -164,5 +164,10 @@ Thumbs.db
 # generated datasets (do not commit)
 data/generated/
 
+# Reale Produktionsdaten (vertraulich, nicht committen)
+data/real_data/Beispiel Ontologien/
+data/real_data/graph/
+data/real_data/wvsc/
+
 context.md
 ARCHITEKTUR.md
