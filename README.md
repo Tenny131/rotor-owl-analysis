@@ -49,6 +49,7 @@ Folgende Dateien sind aus Vertraulichkeitsgründen im `.gitignore` und müssen *
 ### 1. Repository klonen
 
 ```powershell
+# In einem Ordner deiner Wahl cmd/PowerShell als Admin öffnen und Repository klonen
 git clone https://github.com/Tenny131/rotor-owl-analysis.git
 cd rotor-owl-analysis
 ```
