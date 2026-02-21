@@ -169,6 +169,7 @@ data/real_data/
 data/reference/wvsc/
 
 # Analyse-Ausgaben (generiert von datenanalyse_realdaten)
+*.xml
 data/real_data/analyse/
 *.csv
 *.json
