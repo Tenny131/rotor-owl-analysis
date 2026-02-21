@@ -26,7 +26,7 @@ The system uses OWL ontologies for semantic modeling of rotor parameters and Apa
 
 * [**Docker**](https://www.docker.com/products/docker-desktop/) installed
   * For Windows: WSL2 backend recommended
-* Alternatively:
+* Alternatively, manual local installation works with:
   * [Python](https://www.python.org/downloads/release/python-31212/) **3.12**
   * [Apache Jena Fuseki](https://jena.apache.org/download/) **5.6.0**
 
@@ -49,6 +49,7 @@ The following files are excluded via `.gitignore` for confidentiality reasons an
 ### 1. Clone repository
 
 ```powershell
+# Open cmd/PowerShell as admin in a folder of your choice and clone the repository
 git clone https://github.com/Tenny131/rotor-owl-analysis.git
 cd rotor-owl-analysis
 ```
@@ -56,10 +57,11 @@ cd rotor-owl-analysis
 ### 2. Start Docker containers
 
 ```powershell
+# Open Docker Desktop and make sure Docker is running
 # Start services (Fuseki + Streamlit App)
 docker-compose up -d
 
-# View logs
+# View logs (optional)
 docker-compose logs -f
 ```
 
@@ -75,11 +77,16 @@ Docker creates the `rotors` dataset automatically, but the ontology must be uplo
 2. Login: `admin` / `admin`
 3. Select dataset `rotors`
 4. "upload files" → upload `data/ontologien/rotor_ontologie.owl`
-5. Select persistent storage and click upload
+5. Click upload
 
 ### 4. Use Streamlit app
 
 Open http://localhost:8501 in browser.
+
+ In the Streamlit sidebar, select the Fuseki environment "Docker" to establish the connection to the SPARQL endpoint.
+
+
+
 
 
 ## 🔧 Local Development (without Docker)
