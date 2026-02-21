@@ -26,7 +26,7 @@ Das System nutzt OWL-Ontologien zur semantischen Modellierung von Rotor-Paramete
 
 * [**Docker**](https://www.docker.com/products/docker-desktop/) installiert
   * Für Windows: WSL2 Backend empfohlen
-* Alternativ:
+* Alternativ funktioniert die manuelle lokale Installation mit:
   * [Python](https://www.python.org/downloads/release/python-31212/) **3.12**
   * [Apache Jena Fuseki](https://jena.apache.org/download/) **5.6.0**
 
@@ -56,7 +56,7 @@ cd rotor-owl-analysis
 
 ### 2. Docker-Container starten
 
-```
+```powershell
 # Docker Desktop öffnen und sicherstellen, dass Docker läuft
 # Services starten (Fuseki + Streamlit App)
 docker-compose up -d
