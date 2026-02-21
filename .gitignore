@@ -166,7 +166,8 @@ data/generated/
 
 # Reale Produktionsdaten (vertraulich, nicht committen)
 data/real_data/
-data/reference/wvsc/
+data/reference/*
+!data/reference/.gitkeep
 
 # Analyse-Ausgaben (generiert von datenanalyse_realdaten)
 *.xml
