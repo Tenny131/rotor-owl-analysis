@@ -56,11 +56,12 @@ cd rotor-owl-analysis
 
 ### 2. Docker-Container starten
 
-```powershell
+```
+# Docker Desktop öffnen und sicherstellen, dass Docker läuft
 # Services starten (Fuseki + Streamlit App)
 docker-compose up -d
 
-# Logs ansehen
+# Logs ansehen (optional)
 docker-compose logs -f
 ```
 
@@ -76,11 +77,16 @@ Docker erstellt das Dataset `rotors` automatisch, aber die Ontologie muss manuel
 2. Login: `admin` / `admin`
 3. Wähle Dataset `rotors`
 4. "upload files" → `data/ontologien/rotor_ontologie.owl` hochladen
-5. Persistent speichern auswählen und Hochladen klicken
+5. Hochladen klicken
 
 ### 4. Streamlit App nutzen
 
 Öffne http://localhost:8501 im Browser.
+
+ In der Streamlit-Sidebar die Fuseki-Umgebung "Docker" auswahlen, um die Verbindung zum SPARQL-Endpoint herzustellen.
+
+
+
 
 
 ## 🔧 Lokale Entwicklung (ohne Docker)
