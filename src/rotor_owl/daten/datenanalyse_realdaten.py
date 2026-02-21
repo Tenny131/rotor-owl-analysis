@@ -18,7 +18,7 @@ Dieses Skript kombiniert zwei Schritte:
 Eingabe:  data/reference/wvsc/*.json
 Ausgabe:  data/real_data/analyse/parameter_analyse_alle.csv
           data/real_data/analyse/parameter_bereinigt.csv
-          data/real_data/analyse/*.png  (6 Visualisierungen)
+          data/real_data/analyse/*.png  (3 Visualisierungen)
 
 Ausfuehrung:
   python -m rotor_owl.daten.datenanalyse_realdaten
@@ -617,97 +617,9 @@ def erstelle_visualisierungen(df_stats: pd.DataFrame, n_rotoren: int):
         }
     )
 
-    _plot_abdeckung_nach_bereich(df_stats, n_rotoren)
-    _plot_eignungs_top(df_stats)
     _plot_bereich_uebersicht(df_stats)
     _plot_abdeckung_verteilung(df_stats, n_rotoren)
     _plot_datentyp_verteilung(df_stats)
-    _plot_cv_verteilung(df_stats)
-
-
-def _plot_abdeckung_nach_bereich(df_stats: pd.DataFrame, n_rotoren: int):
-    """Boxplot: Abdeckung nach Bereich."""
-    fig, ax = plt.subplots(figsize=(12, 7))
-
-    bereiche = df_stats.groupby("Bereich")["Abdeckung (%)"].apply(list).to_dict()
-    bereiche_sorted = sorted(bereiche.keys(), key=lambda b: np.median(bereiche[b]), reverse=True)
-
-    daten = [bereiche[b] for b in bereiche_sorted]
-    labels = [f"{b}\n(n={len(bereiche[b])})" for b in bereiche_sorted]
-
-    bp = ax.boxplot(daten, vert=False, patch_artist=True, widths=0.6)
-    farben = get_cmap("Set3")(np.linspace(0, 1, len(bereiche_sorted)))
-    for patch, farbe in zip(bp["boxes"], farben):
-        patch.set_facecolor(farbe)
-        patch.set_alpha(0.8)
-
-    ax.set_yticklabels(labels, fontsize=8)
-    ax.set_xlabel("Abdeckung (%)")
-    ax.set_title(
-        f"Parameterabdeckung nach Bereich ({n_rotoren} Rotoren)",
-        fontsize=12,
-        fontweight="bold",
-    )
-    ax.axvline(100, color="gray", linestyle="--", alpha=0.5)
-
-    plt.tight_layout()
-    pfad = AUSGABE_VERZEICHNIS / "01_abdeckung_bereiche.png"
-    fig.savefig(pfad)
-    plt.close(fig)
-    print(f"      -> {pfad.name}")
-
-
-def _plot_eignungs_top(df_stats: pd.DataFrame):
-    """Top-50 und Bottom-20 Parameter nach Eignungs-Score."""
-    fig, axes = plt.subplots(1, 2, figsize=(20, 14))
-
-    # Top 50
-    top = df_stats.head(50).sort_values("Eignung")
-    cmap = get_cmap("RdYlGn")
-    norm = mcolors.Normalize(0, 100)
-    farben = [cmap(norm(s)) for s in top["Eignung"]]
-
-    labels_top = []
-    for _, r in top.iterrows():
-        p = r["Parameter"]
-        short = p.split(".")[-1][:30]
-        labels_top.append(f"{short} [{r['Bereich'][:8]}]")
-
-    axes[0].barh(range(len(top)), top["Eignung"].values, color=farben, edgecolor="white")
-    axes[0].set_yticks(range(len(top)))
-    axes[0].set_yticklabels(labels_top, fontsize=6)
-    axes[0].set_xlabel("Eignungs-Score")
-    axes[0].set_title("Top 50 Parameter", fontsize=11, fontweight="bold")
-    axes[0].set_xlim(0, 105)
-
-    for i, score in enumerate(top["Eignung"].values):
-        axes[0].text(score + 0.5, i, f"{score:.0f}", va="center", fontsize=5)
-
-    # Bottom 20
-    bottom = df_stats.tail(20).sort_values("Eignung")
-    farben_b = [cmap(norm(s)) for s in bottom["Eignung"]]
-
-    labels_bot = []
-    for _, r in bottom.iterrows():
-        p = r["Parameter"]
-        short = p.split(".")[-1][:30]
-        labels_bot.append(f"{short} [{r['Bereich'][:8]}]")
-
-    axes[1].barh(range(len(bottom)), bottom["Eignung"].values, color=farben_b, edgecolor="white")
-    axes[1].set_yticks(range(len(bottom)))
-    axes[1].set_yticklabels(labels_bot, fontsize=7)
-    axes[1].set_xlabel("Eignungs-Score")
-    axes[1].set_title("Bottom 20 Parameter", fontsize=11, fontweight="bold")
-    axes[1].set_xlim(0, 105)
-
-    for i, score in enumerate(bottom["Eignung"].values):
-        axes[1].text(score + 0.5, i, f"{score:.0f}", va="center", fontsize=6)
-
-    plt.tight_layout()
-    pfad = AUSGABE_VERZEICHNIS / "02_eignungs_top_bottom.png"
-    fig.savefig(pfad)
-    plt.close(fig)
-    print(f"      -> {pfad.name}")
 
 
 def _plot_bereich_uebersicht(df_stats: pd.DataFrame):
@@ -810,38 +722,6 @@ def _plot_datentyp_verteilung(df_stats: pd.DataFrame):
 
     plt.tight_layout()
     pfad = AUSGABE_VERZEICHNIS / "05_datentyp_abdeckung.png"
-    fig.savefig(pfad)
-    plt.close(fig)
-    print(f"      -> {pfad.name}")
-
-
-def _plot_cv_verteilung(df_stats: pd.DataFrame):
-    """Histogramm: CV-Verteilung der numerischen Parameter."""
-    num_df = df_stats[(df_stats["Datentyp"] == "numerisch") & (df_stats["CV (%)"] != "–")].copy()
-    if num_df.empty:
-        return
-    num_df["CV_float"] = num_df["CV (%)"].astype(float)
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.hist(
-        num_df["CV_float"].clip(upper=200),
-        bins=40,
-        color="#9b59b6",
-        edgecolor="white",
-        rwidth=0.9,
-    )
-    ax.set_xlabel("Variationskoeffizient CV (%)")
-    ax.set_ylabel("Anzahl Parameter")
-    ax.set_title(
-        f"Verteilung des Variationskoeffizienten ({len(num_df)} numerische Parameter)",
-        fontsize=11,
-        fontweight="bold",
-    )
-    ax.axvline(50, color="red", linestyle="--", alpha=0.5, label="CV = 50 %")
-    ax.legend()
-
-    plt.tight_layout()
-    pfad = AUSGABE_VERZEICHNIS / "06_cv_verteilung.png"
     fig.savefig(pfad)
     plt.close(fig)
     print(f"      -> {pfad.name}")

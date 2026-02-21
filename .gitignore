@@ -174,5 +174,6 @@ data/real_data/analyse/
 *.json
 *.xlsx
 *.owl
+*.png
 context.md
 ARCHITEKTUR.md
