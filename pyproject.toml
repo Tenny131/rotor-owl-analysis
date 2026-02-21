@@ -3,7 +3,6 @@ name = "rotor-owl-analysis"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "owlready2",
     "pandas",
     "numpy",
     "rdflib",
@@ -11,9 +10,10 @@ dependencies = [
     "scikit-learn",
     "SPARQLWrapper",
     "plotly",
-    "networkx",
-    "gensim",
     "matplotlib",
+    "scipy",
+    "openpyxl",
+    "requests",
 ]
 
 [project.scripts]

@@ -1,7 +1,7 @@
 """
 JSON-Parser für reale WVSC-Rotordaten – CSV-gesteuert.
 
-Liest die handgepflegte Datei ``parameter_gefiltert.csv``, die festlegt
+Liest die handgepflegte Datei ``parameter_auswahl.csv``, die festlegt
 welche JSON-Pfade extrahiert werden.  Für jeden Rotor wird das JSON
 rekursiv geflattened (gleiche Logik wie datenanalyse_realdaten.py) und
 anschließend nur die in der CSV definierten Pfade übernommen.
@@ -30,10 +30,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Standardpfade
 # ---------------------------------------------------------------------------
-WVSC_STANDARD_VERZEICHNIS = Path(__file__).resolve().parents[3] / "data" / "real_data" / "wvsc"
-PARAMETER_CSV = (
-    Path(__file__).resolve().parents[3] / "data" / "real_data" / "parameter_gefiltert.csv"
-)
+WVSC_STANDARD_VERZEICHNIS = Path(__file__).resolve().parents[3] / "data" / "reference" / "wvsc"
+PARAMETER_CSV = Path(__file__).resolve().parents[3] / "data" / "reference" / "parameter_auswahl.csv"
 
 # ---------------------------------------------------------------------------
 # Fachkategorie → ptype-Mapping (wie im bisherigen Parser)
@@ -89,7 +87,7 @@ def _lade_parameter_csv(
     csv_pfad: Path | str | None = None,
 ) -> dict[str, dict]:
     """
-    Liest ``parameter_gefiltert.csv`` und gibt ein Dict zurück:
+    Liest ``parameter_auswahl.csv`` und gibt ein Dict zurück:
 
         json_pfad → {"component", "parameter", "unit", "ptype", "datentyp"}
 
@@ -487,11 +485,11 @@ def fetch_all_features_from_json(
     """
     Liest alle WVSC-JSON-Dateien und gibt ``features_by_rotor`` zurück.
 
-    Die zu extrahierenden Parameter werden aus ``parameter_gefiltert.csv``
+    Die zu extrahierenden Parameter werden aus ``parameter_auswahl.csv``
     gelesen – keine hardcodierten Mappings.
 
-    :param verzeichnis: Pfad zum JSON-Verzeichnis (Standard: data/real_data/wvsc)
-    :param csv_pfad: Pfad zur Parameter-CSV (Standard: data/real_data/parameter_gefiltert.csv)
+    :param verzeichnis: Pfad zum JSON-Verzeichnis (Standard: data/reference/wvsc)
+    :param csv_pfad: Pfad zur Parameter-CSV (Standard: data/reference/parameter_auswahl.csv)
     :return: features_by_rotor[rotor_id]["params"][(component, param)] = {"value", "unit", "ptype"}
     """
     if verzeichnis is None:

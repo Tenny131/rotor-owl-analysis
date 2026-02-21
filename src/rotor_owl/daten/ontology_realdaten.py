@@ -413,7 +413,9 @@ if __name__ == "__main__":
 
     # ======================save ontology =========================
     print("\n[MAIN] --- Saving ontology to file...")
-    output_file = os.path.join(data_dir, "rotor_ontologie_realdaten.owl")
+    output_dir = os.path.join(data_dir, "ontologien")
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, "rotor_ontologie_realdaten.owl")
     g.serialize(destination=output_file, format="xml")
 
     print(f"\n[MAIN] --- Ontology saved successfully to {output_file}.")

@@ -16,7 +16,7 @@ The system uses OWL ontologies for semantic modeling of rotor parameters and Apa
 
 **Features:**
 * Select query rotor
-* Choose similarity method (A-D)
+* Choose similarity method (Rule-based, Vector-based, PCA, Autoencoder, K-Means, Hybrid)
 * Adjust category weights
 * Find top-k similar rotors
 * View detailed parameter comparisons
@@ -29,6 +29,18 @@ The system uses OWL ontologies for semantic modeling of rotor parameters and Apa
 * Alternatively:
   * [Python](https://www.python.org/downloads/release/python-31212/) **3.12**
   * [Apache Jena Fuseki](https://jena.apache.org/download/) **5.6.0**
+
+### ⚠️ Manual Files (not in repository)
+
+The following files are excluded via `.gitignore` for confidentiality reasons and must be **manually** placed in the `data/reference/` folder:
+
+| File | Target folder | Description |
+|------|--------------|-------------|
+| `AE_Ontology_Entwurf_IN_Feedback.xlsx` | `data/reference/` | Excel with components, parameters, and dependencies |
+| `Ontology_Base.owl` | `data/reference/` | Base ontology (OWL) |
+| `parameters.csv` | `data/reference/` | Parameter definitions for synthetic data |
+| `parameter_auswahl.csv` | `data/reference/` | Parameter selection for real data (44 parameters) |
+| `*.json` (WVSC rotor data) | `data/reference/wvsc/` | Real rotor JSON files |
 
 ---
 
@@ -57,7 +69,13 @@ docker-compose logs -f
 
 ### 3. Load ontology into Fuseki
 
-* Docker uploads the ontology automatically.
+Docker creates the `rotors` dataset automatically, but the ontology must be uploaded manually:
+
+1. Open http://localhost:3030
+2. Login: `admin` / `admin`
+3. Select dataset `rotors`
+4. "upload files" → upload `data/ontologien/rotor_ontologie.owl`
+5. Select persistent storage and click upload
 
 ### 4. Use Streamlit app
 
@@ -78,7 +96,7 @@ pip install -e .
 
 ```powershell
 # CLI interface
-python src/rotor_owl/daten/dataset_generate.py --n 100 --v 2.0 --seed 42
+python -m rotor_owl.daten.dataset_generate --n 100 --v 2.0 --seed 42
 
 # Parameters:
 # --n: Number of rotor variants (default: 50)
@@ -94,17 +112,17 @@ Creates `data/generated/generated.csv` with synthetic rotor parameters.
 
 ### 3. Create ontology
 
+**Generated data (synthetic):**
 ```powershell
-# Activate virtual environment
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -e .
-
-# Create ontology
-python src/rotor_owl/Ontology.py
+python -m rotor_owl.daten.ontology_generierte_daten
 ```
+Creates `data/ontologien/rotor_ontologie.owl` from `data/generated/generated.csv`.
 
-This creates `data/rotor_ontologie.owl`.
+**Real data (WVSC-JSON):**
+```powershell
+python -m rotor_owl.daten.ontology_realdaten
+```
+Creates `data/ontologien/rotor_ontologie_realdaten.owl` from JSON files in `data/reference/wvsc/`.
 
 
 ### 4. Start Fuseki manually
@@ -118,7 +136,7 @@ fuseki-server --loc=tdb2 --update /rotors
 2. Login: `admin` / `admin`
 3. Go to "manage datasets"
 4. Create dataset `rotors`
-5. "upload files" → upload `data/rotor_ontologie.owl`
+5. "upload files" → upload `data/ontologien/rotor_ontologie.owl`
 * Select persistent storage and click upload
 
 ### 6. Streamlit locally
@@ -127,55 +145,19 @@ fuseki-server --loc=tdb2 --update /rotors
 streamlit run src/rotor_owl/streamlit_app.py
 ```
 
-Configure endpoint in `src/rotor_owl/konfiguration.py`:
-
-```python
-FUSEKI_ENDPOINT_STANDARD = "http://localhost:3030/rotors/sparql"
-```
+The Fuseki endpoint (Localhost/Docker) and dataset name are configured directly in the Streamlit sidebar.
 
 ---
 
-## 🔬 Validation of Similarity Methods
+## 🔬 Similarity Methods
 
-### Problem
-
-Graph-Embeddings show only 4.5% range with identical rotor structure.
-All rotors have identical RDF structure (only parameter values differ).
-
-### Solution
-
-Validation without expert opinions using 5 statistical tests:
-
-1. Physical plausibility (correlation with power/geometry)
-2. Silhouette score (cluster quality)
-3. Extreme cases (identical vs. maximum differences)
-4. Spread analysis (range, coefficient of variation)
-5. Bootstrap stability (ranking consistency)
-
-### Run validation
-
-```powershell
-python validate_similarities.py
-```
-
-Creates:
-* `data/similarity_validation.png` (visualization)
-* `data/similarity_validation.pdf` (vector format)
-* `temp/similarity_*.csv` (raw data with timestamp)
-
-### Results
-
-| Method | Range | CV | Kendall-Tau | Rating |
-|---------|-------|----|----|-------|
-| Vector-based | 54.7% | 11.2% | 1.0 | Excellent |
-| Autoencoder | 93.1% | 142.2% | 1.0 | Excellent |
-| Graph-Embeddings | 6.1% | 0.8% | 0.99 | Poor |
-
-Interpretation:
-* Vector-based and Autoencoder are complementary (different feature spaces)
-* Graph-Embeddings unsuitable with identical structure
-* Hybrid method uses 50% Autoencoder + 50% Vector-based (Graph replaced)
-
-Validation results are displayed in Streamlit UI at the bottom (expandable).
+| Method | Type | Description |
+|--------|------|-------------|
+| Rule-based | no ML | Parameter-wise comparison with weighted aggregation |
+| Vector-based | ML | Feature vectors per category, cosine similarity |
+| PCA-Embedding | ML | Dimensionality reduction via PCA, cosine similarity |
+| Autoencoder | ML | Neural network for latent representations |
+| K-Means Clustering | ML | Cluster assignment, centroid distance similarity |
+| Hybrid | ML | Weighted combination of two selected methods |
 
 ---

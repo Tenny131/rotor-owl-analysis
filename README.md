@@ -16,7 +16,7 @@ Das System nutzt OWL-Ontologien zur semantischen Modellierung von Rotor-Paramete
 
 **Features:**
 * Query-Rotor auswählen
-* Similarity-Methode wählen (A-D)
+* Similarity-Methode wählen (Regelbasiert, Vektorbasiert, PCA, Autoencoder, K-Means, Hybrid)
 * Kategorie-Gewichte anpassen
 * Top-k ähnliche Rotoren finden
 * Detaillierte Parameter-Vergleiche ansehen
@@ -29,6 +29,18 @@ Das System nutzt OWL-Ontologien zur semantischen Modellierung von Rotor-Paramete
 * Alternativ:
   * [Python](https://www.python.org/downloads/release/python-31212/) **3.12**
   * [Apache Jena Fuseki](https://jena.apache.org/download/) **5.6.0**
+
+### ⚠️ Manuelle Dateien (nicht im Repository)
+
+Folgende Dateien sind aus Vertraulichkeitsgründen im `.gitignore` und müssen **manuell** in den `data/reference/` Ordner gelegt werden:
+
+| Datei | Zielordner | Beschreibung |
+|-------|-----------|-------------|
+| `AE_Ontology_Entwurf_IN_Feedback.xlsx` | `data/reference/` | Excel mit Komponenten, Parametern und Abhängigkeiten |
+| `Ontology_Base.owl` | `data/reference/` | Basis-Ontologie (OWL) |
+| `parameters.csv` | `data/reference/` | Parameterdefinitionen für synthetische Daten |
+| `parameter_auswahl.csv` | `data/reference/` | Parameter-Auswahl für Realdaten (44 Parameter) |
+| `*.json` (WVSC-Rotordaten) | `data/reference/wvsc/` | Reale Rotor-JSON-Dateien |
 
 ---
 
@@ -57,7 +69,13 @@ docker-compose logs -f
 
 ### 3. Ontologie in Fuseki laden
 
-* Docker lädt die Ontologie automatisch hoch.
+Docker erstellt das Dataset `rotors` automatisch, aber die Ontologie muss manuell hochgeladen werden:
+
+1. Öffne http://localhost:3030
+2. Login: `admin` / `admin`
+3. Wähle Dataset `rotors`
+4. "upload files" → `data/ontologien/rotor_ontologie.owl` hochladen
+5. Persistent speichern auswählen und Hochladen klicken
 
 ### 4. Streamlit App nutzen
 
@@ -78,7 +96,7 @@ pip install -e .
 
 ```powershell
 # CLI-Interface
-python src/rotor_owl/daten/dataset_generate.py --n 100 --v 2.0 --seed 42
+python -m rotor_owl.daten.dataset_generate --n 100 --v 2.0 --seed 42
 
 # Parameter:
 # --n: Anzahl Rotor-Varianten (Standard: 50)
@@ -94,18 +112,17 @@ Erzeugt `data/generated/generated.csv` mit synthetischen Rotor-Parametern.
 
 ### 3. Ontologie erstellen
 
+**Generierte Daten (synthetisch):**
 ```powershell
-# Virtual Environment aktivieren
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python.exe -m pip install --upgrade pip
-pip install -e .
-
-# Ontologie erstellen
-python src/rotor_owl/Ontology.py
+python -m rotor_owl.daten.ontology_generierte_daten
 ```
+Erstellt `data/ontologien/rotor_ontologie.owl` aus `data/generated/generated.csv`.
 
-Dies erstellt `data/rotor_ontologie.owl`.
+**Realdaten (WVSC-JSON):**
+```powershell
+python -m rotor_owl.daten.ontology_realdaten
+```
+Erstellt `data/ontologien/rotor_ontologie_realdaten.owl` aus den JSON-Dateien in `data/reference/wvsc/`.
 
 
 ### 4. Fuseki manuell starten
@@ -119,7 +136,7 @@ fuseki-server --loc=tdb2 --update /rotors
 2. Login: `admin` / `admin`
 3. Gehe zu "manage datasets"
 4. Erstelle Dataset `rotors`
-5. "upload files" → `data/rotor_ontologie.owl` hochladen
+5. "upload files" → `data/ontologien/rotor_ontologie.owl` hochladen
 * Persistent speichern auswählen und Hochladen klicken
 
 ### 6. Streamlit lokal
@@ -128,10 +145,6 @@ fuseki-server --loc=tdb2 --update /rotors
 streamlit run src/rotor_owl/streamlit_app.py
 ```
 
-Endpoint konfigurieren in `src/rotor_owl/konfiguration.py`:
-
-```python
-FUSEKI_ENDPOINT_STANDARD = "http://localhost:3030/rotors/sparql"
-```
+Der Fuseki-Endpoint (Localhost/Docker) und der Dataset-Name werden direkt in der Streamlit-Sidebar konfiguriert.
 
 ---

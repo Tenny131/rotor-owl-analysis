@@ -165,9 +165,11 @@ Thumbs.db
 data/generated/
 
 # Reale Produktionsdaten (vertraulich, nicht committen)
-data/real_data/Beispiel Ontologien/
-data/real_data/graph/
-data/real_data/wvsc/
+data/real_data/
+data/reference/wvsc/
+
+# Analyse-Ausgaben (generiert von datenanalyse_realdaten)
+data/real_data/analyse/
 *.csv
 *.json
 *.xlsx

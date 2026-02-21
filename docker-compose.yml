@@ -20,7 +20,7 @@ services:
       - "8501:8501"
     environment:
       - SPARQL_ENDPOINT_URL=http://fuseki:3030/rotors/sparql
-      - ONTOLOGY_PATH=/app/data/rotor_ontologie.owl
+      - ONTOLOGY_PATH=/app/data/ontologien/rotor_ontologie.owl
     volumes:
       - ./data:/app/data:ro
     depends_on:
