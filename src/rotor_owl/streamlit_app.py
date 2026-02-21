@@ -6,13 +6,11 @@ import streamlit as st
 import plotly.graph_objects as go
 from SPARQLWrapper import SPARQLWrapper, XML
 
-from rotor_owl.config.konfiguration import FUSEKI_ENDPOINT_STANDARD
 from rotor_owl.daten.feature_fetcher import (
     fetch_all_features,
     build_numeric_stats,
     fetch_component_dependencies,
 )
-from rotor_owl.daten.json_parser import fetch_all_features_from_json
 from rotor_owl.methoden.pca_aehnlichkeit import (
     build_pca_embeddings,
     berechne_topk_aehnlichkeiten_pca,
@@ -31,9 +29,9 @@ from rotor_owl.config.kategorien import (
     KATEGORIE_BESCHREIBUNG,
 )
 
-from rotor_owl.methoden.knn_aehnlichkeit import (
-    build_knn_embeddings,
-    berechne_topk_aehnlichkeiten_knn,
+from rotor_owl.methoden.vektorbasierte_aehnlichkeit import (
+    build_vektor_embeddings,
+    berechne_topk_aehnlichkeiten_vektorbasiert,
 )
 
 # Autoencoder (C2)
@@ -48,10 +46,6 @@ from rotor_owl.methoden.kmeans_aehnlichkeit import berechne_topk_aehnlichkeiten_
 # Hybrid (modular)
 from rotor_owl.methoden.hybrid_aehnlichkeit import berechne_topk_aehnlichkeiten_hybrid
 
-# Graph-Embeddings
-from rotor_owl.methoden.graph_embedding_aehnlichkeit import (
-    berechne_topk_aehnlichkeiten_graph_embedding,
-)
 from rdflib import Graph
 
 # Validation
@@ -72,22 +66,25 @@ st.title("🔍 Rotor-Ähnlichkeitsanalyse")
 with st.sidebar:
     st.header("Einstellungen")
 
-    datenquelle = st.radio(
-        "Datenquelle",
-        options=["Generiert (Fuseki/SPARQL)", "Realdaten (JSON)"],
-        index=0,
-        help="Generiert: synthetische Daten aus Fuseki. Realdaten: 230 echte WVSC-Rotoren aus JSON.",
+    fuseki_dataset = st.text_input(
+        "Fuseki Dataset Name",
+        value="rotors",
+        help="Name des Fuseki-Datasets, z. B. 'rotors'. Wird in die Endpoint-URL eingesetzt.",
     )
-    ist_realdaten = datenquelle == "Realdaten (JSON)"
+    fuseki_umgebung = st.radio(
+        "Fuseki-Umgebung",
+        options=["Localhost", "Docker"],
+        index=0,
+        help="Localhost: http://localhost:3030. Docker: http://fuseki:3030.",
+    )
+    endpoint_url = (
+        f"http://localhost:3030/{fuseki_dataset}/sparql"
+        if fuseki_umgebung == "Localhost"
+        else f"http://fuseki:3030/{fuseki_dataset}/sparql"
+    )
 
-    endpoint_url = FUSEKI_ENDPOINT_STANDARD
-    if not ist_realdaten:
-        endpoint_url = st.text_input("Fuseki SPARQL Endpoint", value=FUSEKI_ENDPOINT_STANDARD)
-
-    # Button zum Laden der Ontologie und Features (einmalig)
-    if not ist_realdaten and st.button(
-        "📥 Daten laden", help="Lädt Ontologie-Graph und Features von Fuseki (einmalig)"
-    ):
+    # Daten automatisch laden (einmalig)
+    if not st.session_state.get("daten_geladen", False):
         with st.spinner("Lade Ontologie-Graph von Fuseki..."):
             construct_query = """
             CONSTRUCT { ?s ?p ?o }
@@ -131,34 +128,41 @@ with st.sidebar:
     methode = st.selectbox(
         "Similarity-Methode",
         options=[
-            "Regelbasiert",
-            "k-Nearest Neighbors",
-            "PCA-Embedding",
-            "Autoencoder",
-            "K-Means Clustering",
-            "Graph-Embeddings (Node2Vec)",
+            "Regelbasiert (kein ML)",
+            "Vektorbasiert (ML)",
+            "PCA-Embedding (ML)",
+            "Autoencoder (ML)",
+            "K-Means Clustering (ML)",
             "Hybrid-Methode",
         ],
-        index=6,  # Hybrid-Methode als Standard
+        index=0,  # Regelbasiert als Standard
+        help=(
+            "**Regelbasiert (kein ML):** Parameterweiser Vergleich mit gewichteter Aggregation. "
+            "Keine Dimensionsreduktion, direkte Ähnlichkeit pro Parameterpaar.\n\n"
+            "**Vektorbasiert (ML):** Feature-Vektoren pro Kategorie, Cosine-Similarity. "
+            "Kodiert numerische und kategorische Features in Vektoren.\n\n"
+            "**PCA-Embedding (ML):** Hauptkomponentenanalyse zur Dimensionsreduktion, "
+            "dann Cosine-Similarity auf latenten Vektoren.\n\n"
+            "**Autoencoder (ML):** Neuronales Netz lernt komprimierte Repräsentation, "
+            "Cosine-Similarity im Latent Space.\n\n"
+            "**K-Means Clustering (ML):** Spherical K-Means gruppiert Rotoren, "
+            "Similarity basiert auf Cluster-Zugehörigkeit + Centroid-Distanz.\n\n"
+            "**Hybrid-Methode:** Gewichtete Kombination zweier Methoden."
+        ),
     )
 
     # Latent Dimension für PCA / Autoencoder (32 = bessere Varianz-Erhaltung)
     latent_dim = 32
-    if methode == "PCA-Embedding":
+    if methode == "PCA-Embedding (ML)":
         latent_dim = st.slider("PCA Latent Dimension", 2, 64, 32, 1)
 
-    if methode == "Autoencoder":
+    if methode == "Autoencoder (ML)":
         latent_dim = st.slider("Autoencoder Latent Dimension", 2, 64, 32, 1)
 
     # K-Means: Anzahl Cluster (8 = gute Balance für ~50 Rotoren)
     n_clusters = 8
-    if methode == "K-Means Clustering":
+    if methode == "K-Means Clustering (ML)":
         n_clusters = st.slider("K-Means Cluster (k)", 2, 30, 8, 1)
-
-    # Graph-Embeddings: Embedding-Dimensionen
-    embedding_dim = 32
-    num_walks = 1
-    walk_length = 10
 
     # Hybrid-Methode: Methoden-Auswahl und Gewichte
     hybrid_methode_1 = "PCA-Embedding"
@@ -170,11 +174,11 @@ with st.sidebar:
         st.caption("**Hybrid-Konfiguration**")
 
         verfuegbare_methoden = [
-            "Regelbasiert",
-            "k-Nearest Neighbors",
-            "PCA-Embedding",
-            "Autoencoder",
-            "K-Means Clustering",
+            "Regelbasiert (kein ML)",
+            "Vektorbasiert (ML)",
+            "PCA-Embedding (ML)",
+            "Autoencoder (ML)",
+            "K-Means Clustering (ML)",
         ]
 
         hybrid_methode_1 = st.selectbox(
@@ -248,31 +252,14 @@ with st.sidebar:
         KAT_REQ_ELEC: gewicht_req_elec,
     }
 
-    st.divider()
-    if not ist_realdaten:
-        daten_neuladen = st.button("Daten neu laden (Fuseki erneut abfragen)")
-    else:
-        daten_neuladen = False
 
-
-if daten_neuladen:
-    fetch_all_features.clear()
-
-
-# Daten laden – je nach Datenquelle
-if ist_realdaten:
-    with st.spinner("Lade Realdaten aus JSON-Dateien..."):
-        features_by_rotor = fetch_all_features_from_json()
-        dependencies = {}  # Realdaten haben keine Ontologie-Dependencies
-    st.sidebar.success(f"✅ {len(features_by_rotor)} Rotoren aus JSON geladen")
-else:
-    try:
-        with st.spinner("Lade Features aus Fuseki..."):
-            features_by_rotor = fetch_all_features(endpoint_url)
-            dependencies = fetch_component_dependencies(endpoint_url)
-    except Exception as fehler:
-        st.error(f"Fuseki-Abfrage fehlgeschlagen: {fehler}")
-        st.stop()
+try:
+    with st.spinner("Lade Features aus Fuseki..."):
+        features_by_rotor = fetch_all_features(endpoint_url)
+        dependencies = fetch_component_dependencies(endpoint_url)
+except Exception as fehler:
+    st.error(f"Fuseki-Abfrage fehlgeschlagen: {fehler}")
+    st.stop()
 
 # Sofort in session_state speichern (fuer Matrix-Validierung etc.)
 st.session_state["features_by_rotor"] = features_by_rotor
@@ -330,13 +317,13 @@ if starte_berechnung:
 
     # Vergleich aller Methoden (für Analyse)
     if vergleich_aktiv:
-        # Setze alle Gewichte gleichmäßig (5 Methoden ohne Graph-Embeddings)
+        # Setze alle Gewichte gleichmäßig (5 Methoden)
         methoden_gewichte = {
-            "Regelbasiert": 1 / 5,
-            "k-Nearest Neighbors": 1 / 5,
-            "PCA-Embedding": 1 / 5,
-            "Autoencoder": 1 / 5,
-            "K-Means Clustering": 1 / 5,
+            "Regelbasiert (kein ML)": 1 / 5,
+            "Vektorbasiert (ML)": 1 / 5,
+            "PCA-Embedding (ML)": 1 / 5,
+            "Autoencoder (ML)": 1 / 5,
+            "K-Means Clustering (ML)": 1 / 5,
         }
 
         topk_ergebnisse = berechne_topk_aehnlichkeiten_hybrid(
@@ -370,7 +357,7 @@ if starte_berechnung:
             top_k=top_k,
         )
 
-    elif methode == "Regelbasiert":
+    elif methode == "Regelbasiert (kein ML)":
         # Regelbasierte Similarity
         topk_ergebnisse = berechne_topk_aehnlichkeiten(
             query_rotor_id=query_rotor_id,
@@ -381,11 +368,11 @@ if starte_berechnung:
             top_k=top_k,
         )
 
-    elif methode == "k-Nearest Neighbors":
-        # kNN Cosine auf Feature-Vektoren
-        embeddings = build_knn_embeddings(features_by_rotor, stats)
+    elif methode == "Vektorbasiert (ML)":
+        # Vektorbasiert: Cosine auf Feature-Vektoren
+        embeddings = build_vektor_embeddings(features_by_rotor, stats)
 
-        topk_ergebnisse = berechne_topk_aehnlichkeiten_knn(
+        topk_ergebnisse = berechne_topk_aehnlichkeiten_vektorbasiert(
             query_rotor_id=query_rotor_id,
             rotor_ids=rotor_ids,
             embeddings=embeddings,
@@ -393,8 +380,8 @@ if starte_berechnung:
             top_k=top_k,
         )
 
-    elif methode == "Autoencoder":
-        # Autoencoder-Embedding + kNN/Cosine
+    elif methode == "Autoencoder (ML)":
+        # Autoencoder-Embedding + Vektorbasiert/Cosine
         ae_embeddings = build_autoencoder_embeddings(
             features_by_rotor=features_by_rotor,
             stats=stats,
@@ -409,7 +396,7 @@ if starte_berechnung:
             top_k=top_k,
         )
 
-    elif methode == "K-Means Clustering":
+    elif methode == "K-Means Clustering (ML)":
         # Custom K-Means Similarity
         topk_ergebnisse = berechne_topk_aehnlichkeiten_kmeans(
             query_rotor_id=query_rotor_id,
@@ -421,48 +408,8 @@ if starte_berechnung:
             top_k=top_k,
         )
 
-    elif methode == "Graph-Embeddings (Node2Vec)":
-        # Nutze bereits geladene Ontologie oder lade neu
-        if st.session_state.get("ontologie_geladen", False):
-            ontologie_graph = st.session_state["ontologie_graph"]
-        else:
-            with st.spinner("Lade Ontologie-Graph von Fuseki..."):
-                construct_query = """
-                CONSTRUCT { ?s ?p ?o }
-                WHERE { ?s ?p ?o }
-                LIMIT 100000
-                """
-                sparql = SPARQLWrapper(endpoint_url)
-                sparql.setQuery(construct_query)
-                sparql.setReturnFormat(XML)
-                result_data = sparql.query().convert()
-                if isinstance(result_data, Graph):
-                    ontologie_graph = result_data
-                else:
-                    ontologie_graph = Graph()
-                    if isinstance(result_data, bytes):
-                        ontologie_graph.parse(data=result_data, format="xml")
-                    else:
-                        ontologie_graph.parse(data=str(result_data), format="xml")
-
-                st.session_state["ontologie_graph"] = ontologie_graph
-                st.session_state["ontologie_geladen"] = True
-
-        # Graph-Embeddings (Node2Vec) mit gewichteten Kanten
-        topk_ergebnisse = berechne_topk_aehnlichkeiten_graph_embedding(
-            query_rotor_id=query_rotor_id,
-            alle_rotor_ids=rotor_ids,
-            ontologie_graph=ontologie_graph,
-            kategorie_gewichte=gewichtung_pro_kategorie,
-            embedding_dimensions=embedding_dim,
-            num_walks=num_walks,
-            walk_length=walk_length,
-            top_k=top_k,
-            dependencies=dependencies if dependencies else None,
-        )
-
     else:
-        # PCA-Embedding + kNN/Cosine
+        # PCA-Embedding + Vektorbasiert/Cosine
         pca_embeddings = build_pca_embeddings(
             features_by_rotor=features_by_rotor,
             stats=stats,
@@ -507,11 +454,11 @@ if starte_berechnung:
                 if vergleich_aktiv:
                     # Keys müssen mit hybrid_aehnlichkeit.py übereinstimmen
                     methoden_mapping = {
-                        "Regelbasiert": "Regelbasiert",
-                        "k-NN": "k-Nearest Neighbors",
-                        "PCA": "PCA-Embedding",
-                        "Autoencoder": "Autoencoder",
-                        "K-Means": "K-Means Clustering",
+                        "Regelbasiert": "Regelbasiert (kein ML)",
+                        "Vektorbasiert": "Vektorbasiert (ML)",
+                        "PCA": "PCA-Embedding (ML)",
+                        "Autoencoder": "Autoencoder (ML)",
+                        "K-Means": "K-Means Clustering (ML)",
                     }
                     for display_name, key_name in methoden_mapping.items():
                         zeile[display_name] = float(
@@ -557,16 +504,17 @@ if starte_berechnung:
         # Daten für Heatmap vorbereiten: Zeilen = Methoden, Spalten = Rotoren
         if vergleich_aktiv:
             aktive_methoden = [
-                "Regelbasiert",
-                "k-Nearest Neighbors",
-                "PCA-Embedding",
-                "Autoencoder",
-                "K-Means Clustering",
+                "Regelbasiert (kein ML)",
+                "Vektorbasiert (ML)",
+                "PCA-Embedding (ML)",
+                "Autoencoder (ML)",
+                "K-Means Clustering (ML)",
             ]
             methoden_labels = [
-                m.replace("-Nearest Neighbors", "-NN")
-                .replace("-Embedding", "")
+                m.replace("-Embedding ", "")
                 .replace(" Clustering", "")
+                .replace(" (kein ML)", "")
+                .replace(" (ML)", "")
                 for m in aktive_methoden
             ]
         else:
@@ -715,7 +663,7 @@ if st.button("🔬 Vollständige Matrix-Validierung (alle Rotor-Paare)", type="s
         rotor_ids = sorted(features_by_rotor.keys())
         n_rotors = len(rotor_ids)
 
-        datenquelle_label = "Realdaten (JSON)" if ist_realdaten else "Generiert (Fuseki)"
+        datenquelle_label = f"Fuseki ({fuseki_umgebung})"
 
         st.info(
             f"📊 Berechne {n_rotors}×{n_rotors} = {n_rotors**2} Similarity-Werte für jede Methode "
@@ -753,21 +701,21 @@ if st.button("🔬 Vollständige Matrix-Validierung (alle Rotor-Paare)", type="s
         similarity_matrices["Regelbasiert"] = regelbasiert_matrix
         progress_bar.progress(1 / 6)
 
-        # 2. k-NN - Vollständige Matrix
-        status_text.text(f"2/6: k-NN (0/{n_rotors} Rotoren)...")
-        knn_emb = build_knn_embeddings(features_by_rotor, numeric_stats)
-        knn_matrix = np.ones((n_rotors, n_rotors))
+        # 2. Vektorbasiert - Vollständige Matrix
+        status_text.text(f"2/6: Vektorbasiert (0/{n_rotors} Rotoren)...")
+        vektor_emb = build_vektor_embeddings(features_by_rotor, numeric_stats)
+        vektor_matrix = np.ones((n_rotors, n_rotors))
         for i, query_r in enumerate(rotor_ids):
-            ergebnisse = berechne_topk_aehnlichkeiten_knn(
-                query_r, rotor_ids, knn_emb, val_gewichte, top_k=len(rotor_ids)
+            ergebnisse = berechne_topk_aehnlichkeiten_vektorbasiert(
+                query_r, rotor_ids, vektor_emb, val_gewichte, top_k=len(rotor_ids)
             )
             for item in ergebnisse:
                 rotor_id, sim = item[0], item[1]
                 j = rotor_ids.index(rotor_id)
-                knn_matrix[i, j] = sim
+                vektor_matrix[i, j] = sim
             if i % 10 == 0:
-                status_text.text(f"2/6: k-NN ({i}/{n_rotors} Rotoren)...")
-        similarity_matrices["k-NN"] = knn_matrix
+                status_text.text(f"2/6: Vektorbasiert ({i}/{n_rotors} Rotoren)...")
+        similarity_matrices["Vektorbasiert"] = vektor_matrix
         progress_bar.progress(2 / 6)
 
         # 3. PCA - Vollständige Matrix
@@ -831,11 +779,11 @@ if st.button("🔬 Vollständige Matrix-Validierung (alle Rotor-Paare)", type="s
         # 6. Hybrid - verwendet die UI-Einstellungen (hybrid_methode_1 + hybrid_methode_2)
         # Mapping von UI-Namen zu Matrix-Keys
         methoden_matrix_mapping = {
-            "Regelbasiert": "Regelbasiert",
-            "k-Nearest Neighbors": "k-NN",
-            "PCA-Embedding": "PCA",
-            "Autoencoder": "Autoencoder",
-            "K-Means Clustering": "K-Means",
+            "Regelbasiert (kein ML)": "Regelbasiert",
+            "Vektorbasiert (ML)": "Vektorbasiert",
+            "PCA-Embedding (ML)": "PCA",
+            "Autoencoder (ML)": "Autoencoder",
+            "K-Means Clustering (ML)": "K-Means",
         }
 
         matrix_key_1 = methoden_matrix_mapping.get(hybrid_methode_1, "PCA")
@@ -1023,13 +971,13 @@ if st.button("🔬 Vollständige Matrix-Validierung (alle Rotor-Paare)", type="s
         best_sil = max(validation_results.items(), key=lambda x: x[1]["silhouette"])
 
         st.success(f"""
-        **Ergebnis der vollständigen Matrix-Validierung:**
+Ergebnis der vollständigen Matrix-Validierung:
             
-📊 **Datenbasis:** {n_rotors} Rotoren, {n_rotors*(n_rotors-1)//2} unique Rotor-Paare ({datenquelle_label})
+Datenbasis: {n_rotors} Rotoren, {n_rotors*(n_rotors-1)//2} unique Rotor-Paare ({datenquelle_label})
             
-        - 🏆 **Beste Trennschärfe (Range):** {best_range[0]} ({best_range[1]['range']*100:.1f}%)
-        - 📈 **Höchste Variabilität (CV):** {best_cv[0]} ({best_cv[1]['cv']*100:.1f}%)
-        - ⭐ **Beste Cluster-Qualität (Silhouette):** {best_sil[0]} ({best_sil[1]['silhouette']:.3f})
+- Beste Trennschärfe (Range): {best_range[0]} ({best_range[1]['range']*100:.1f}%)
+- Höchste Variabilität (CV): {best_cv[0]} ({best_cv[1]['cv']*100:.1f}%)
+- Beste Cluster-Qualität (Silhouette): {best_sil[0]} ({best_sil[1]['silhouette']:.3f})
         """)
 
         # Zeige Details als Dataframe
@@ -1059,7 +1007,7 @@ if st.button("🔬 Vollständige Matrix-Validierung (alle Rotor-Paare)", type="s
         ml_methoden_namen = [m for m in methods if m != referenz_name]
         methoden_farben_map = {
             "Regelbasiert": "#1f77b4",
-            "k-NN": "#ff7f0e",
+            "Vektorbasiert": "#ff7f0e",
             "PCA": "#2ca02c",
             "Autoencoder": "#d62728",
             "K-Means": "#9467bd",
@@ -1090,8 +1038,8 @@ if st.button("🔬 Vollständige Matrix-Validierung (alle Rotor-Paare)", type="s
                     triu_vektoren[methods[mi]],
                     triu_vektoren[methods[mj]],
                 )
-                korr_matrix[mi, mj] = rho_val
-                korr_matrix[mj, mi] = rho_val
+                korr_matrix[mi, mj] = rho_val  # type: ignore
+                korr_matrix[mj, mi] = rho_val  # type: ignore
 
         # Jaccard Top-10 Overlap
         jaccard_top_k = 10
@@ -1220,9 +1168,9 @@ if st.button("🔬 Vollständige Matrix-Validierung (alle Rotor-Paare)", type="s
 
 | Symbol | Bedeutung | p-Wert |
 |:------:|-----------|--------|
-| \*\*\* | hochsignifikant | p < 0.001 |
-| \*\* | sehr signifikant | p < 0.01 |
-| \* | signifikant | p < 0.05 |
+| {chr(42)}{chr(42)}{chr(42)} | hochsignifikant | p < 0.001 |
+| {chr(42)}{chr(42)} | sehr signifikant | p < 0.01 |
+| {chr(42)} | signifikant | p < 0.05 |
 | n.s. | nicht signifikant | p ≥ 0.05 |
 
 > **Signifikanz ≠ Stärke:** Die Signifikanz (p-Wert) sagt aus, ob eine Korrelation
@@ -1346,20 +1294,35 @@ if st.button("🔬 Vollständige Matrix-Validierung (alle Rotor-Paare)", type="s
             "**Korrelationsstärke (Hinkle et al., 2003):**\n\n" + "\n".join(zusammenfassung_zeilen)
         )
 
-with st.expander("📈 Vorberechnete Validierung (aus validate_results.py)", expanded=False):
-    from pathlib import Path
+with st.expander("Parameterliste (aus Ontologie)", expanded=False):
+    from rotor_owl.config.kategorien import map_paramtype_to_kategorie, KATEGORIE_LABEL
 
-    validierung_dir = Path(__file__).parent.parent.parent / "data"
-    validierung_bilder = [
-        ("validierung_statistik.png", "Statistische Kennzahlen"),
-        ("validierung_korrelation.png", "Korrelationsanalyse vs. Regelbasiert"),
-        ("validierung_scatter.png", "Scatter-Plots: ML vs. Regelbasiert"),
-    ]
-    bilder_gefunden = False
-    for dateiname, beschriftung in validierung_bilder:
-        bild_pfad = validierung_dir / dateiname
-        if bild_pfad.exists():
-            st.image(str(bild_pfad), caption=beschriftung, width="stretch")
-            bilder_gefunden = True
-    if not bilder_gefunden:
-        st.warning("Keine Validierungsbilder gefunden. Führe `python validate_results.py` aus.")
+    if st.session_state.get("daten_geladen", False):
+        _fbr = st.session_state.get("features_by_rotor", {})
+        # Sammle alle Parameter mit ptype über alle Rotoren
+        _param_infos: dict[str, str] = {}  # param_name -> ptype
+        for _rotor_daten in _fbr.values():
+            for _pkey, _pdata in _rotor_daten.get("params", {}).items():
+                _pname = _pkey[1] if isinstance(_pkey, tuple) else str(_pkey)
+                _ptype = _pdata.get("ptype", "UNKNOWN") or "UNKNOWN"
+                if _pname not in _param_infos:
+                    _param_infos[_pname] = _ptype
+
+        # Kategorien zuordnen
+        _kat_params: dict[str, list[str]] = {}
+        for _pname, _ptype in sorted(_param_infos.items()):
+            _kat = map_paramtype_to_kategorie(_ptype)
+            _kat_label = KATEGORIE_LABEL.get(_kat, _kat)
+            _kat_params.setdefault(_kat_label, []).append(_pname)
+
+        # Zusammenfassung
+        st.markdown(
+            f"**{len(_param_infos)} Parameter** in **{len(_kat_params)} Kategorien** erkannt:"
+        )
+        for _kat_label in sorted(_kat_params.keys()):
+            _params = _kat_params[_kat_label]
+            st.markdown(f"**{_kat_label}** ({len(_params)} Parameter)")
+            _param_df = pd.DataFrame({"Parameter": _params})
+            st.dataframe(_param_df, hide_index=True, height=min(35 * len(_params) + 38, 300))
+    else:
+        st.info("Daten noch nicht geladen. Bitte Fuseki-Verbindung prüfen.")

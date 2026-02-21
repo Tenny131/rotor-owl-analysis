@@ -32,7 +32,7 @@ def strip_last_suffix(name: str) -> str:
 
 
 def normalize_param_name(parameter_name: str) -> str:
-    """Normalisiert Parameter-Namen durch Entfernen von Instanz-Suffixen (_D001, _YYYY-MM-DD_1).
+    """Normalisiert Parameter-Namen durch Entfernen von Instanz-Suffixen (_D001, _YYYY-MM-DD_1, _1QA1452-8JA60-0HG2-Z).
 
     Args:
         parameter_name: Parameter-Name mit möglichem Instanz-Suffix
@@ -50,10 +50,17 @@ def normalize_param_name(parameter_name: str) -> str:
     if parameter_name != original_name:
         return parameter_name
 
-    # Fallback: nur "instanz-artige" Suffixe entfernen
+    # Fallback: letztes _SUFFIX prüfen
     if "_" in parameter_name:
         parts = parameter_name.rsplit("_", 1)
         letztes_segment = parts[1]
+
+        # Realdaten-Design-IDs enthalten Hyphens (z.B. 1QA1452-8JA60-0HG2-Z).
+        # Normale Parameter-Segmente enthalten nie Hyphens.
+        if "-" in letztes_segment:
+            return parts[0]
+
+        # Kurze instanz-artige Suffixe (z.B. _1, _D001)
         ist_instanz_suffix = len(letztes_segment) <= 4 and (
             letztes_segment.isupper() or letztes_segment.isdigit()
         )

@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 from sklearn.neural_network import MLPRegressor
 
-from rotor_owl.methoden.knn_aehnlichkeit import build_knn_embeddings
+from rotor_owl.methoden.vektorbasierte_aehnlichkeit import build_vektor_embeddings
 from rotor_owl.utils.math_utils import (
     cosine_similarity,
     relu,
@@ -69,7 +69,7 @@ def build_autoencoder_embeddings(
     """
     rotor_ids = sorted(features_by_rotor.keys())
 
-    base = build_knn_embeddings(features_by_rotor, stats)
+    base = build_vektor_embeddings(features_by_rotor, stats)
     base_norm = normalisiere_embeddings_struktur(base.vectors, rotor_ids)
 
     kategorien: list[str] = sorted(

@@ -168,6 +168,9 @@ data/generated/
 data/real_data/Beispiel Ontologien/
 data/real_data/graph/
 data/real_data/wvsc/
-
+*.csv
+*.json
+*.xlsx
+*.owl
 context.md
 ARCHITEKTUR.md

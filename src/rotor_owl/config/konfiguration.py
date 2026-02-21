@@ -13,17 +13,25 @@ FUSEKI_ENDPOINT_STANDARD = "http://localhost:3030/rotors/sparql"  # Lokal
 # Komponenten-Mapping: Component_ID -> deutscher Label
 KOMPONENTEN_MAPPING = {
     "C_WELLE": "Welle",
+    "C_WELLEENDE": "Wellenende",
     "C_AKTIVTEIL": "Aktivteil",
     "C_LUEFTER": "Lüfter",
     "C_BLECHPAKET": "Blechpaket",
     "C_WUCHTSCHEIBEN": "Wuchtscheiben",
+    "C_ROTOR": "Rotor",
+    "C_LAGER": "Lager",
+    "C_SONSTIGE": "Sonstige",
 }
 
 # Komponenten-Keywords für Text-Matching (lowercase!)
 KOMPONENTEN_KEYWORDS = {
     "welle": "C_WELLE",
+    "wellenende": "C_WELLEENDE",
     "aktivteil": "C_AKTIVTEIL",
     "lüfter": "C_LUEFTER",
     "blechpaket": "C_BLECHPAKET",
     "wuchtscheiben": "C_WUCHTSCHEIBEN",
+    "rotor": "C_ROTOR",
+    "lager": "C_LAGER",
+    "sonstige": "C_SONSTIGE",
 }

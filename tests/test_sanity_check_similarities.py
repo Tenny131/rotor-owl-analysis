@@ -31,19 +31,14 @@ def test_autoencoder_similarity_ranges():
     assert True  # Placeholder
 
 
-def test_graph_embeddings_similarity_ranges():
+def test_vektorbasiert_similarity_ranges():
     """
-    Testet ob Graph-Embedding-Similarities in sinnvollen Bereichen liegen.
+    Testet ob vektorbasierte Similarities in sinnvollen Bereichen liegen.
 
     Erwartung:
     - Top-1 ähnlichster: 0.55 - 0.90
     - Top-5 durchschnitt: 0.45 - 0.75
-    - NICHT alle = 0.5 (Zero-Vektor Bug)
     """
-    # min_top1_similarity = 0.55
-    # max_top1_similarity = 0.90
-    # min_variance = 0.08  # Graph-Embeddings haben mehr Varianz
-
     # TODO: Mit echten Daten testen
     assert True  # Placeholder
 
@@ -54,23 +49,23 @@ def test_hybrid_method_combines_correctly():
 
     Erwartung:
     - Gewichtete Summe liegt zwischen den Einzelmethoden
-    - Bei 60% AE + 40% Graph: Ergebnis näher an Autoencoder
+    - Bei 60% AE + 40% Vektorbasiert: Ergebnis näher an Autoencoder
     """
     # Beispiel:
     # ae_sim = 0.85
-    # graph_sim = 0.65
-    # hybrid_sim = 0.6 * ae_sim + 0.4 * graph_sim = 0.77
+    # vektor_sim = 0.65
+    # hybrid_sim = 0.6 * ae_sim + 0.4 * vektor_sim = 0.77
 
     ae_sim = 0.85
-    graph_sim = 0.65
+    vektor_sim = 0.65
     gewicht_ae = 0.6
-    gewicht_graph = 0.4
+    gewicht_vektor = 0.4
 
-    expected_hybrid = gewicht_ae * ae_sim + gewicht_graph * graph_sim
+    expected_hybrid = gewicht_ae * ae_sim + gewicht_vektor * vektor_sim
     assert abs(expected_hybrid - 0.77) < 0.01
 
     # Hybrid sollte zwischen min und max liegen
-    assert min(ae_sim, graph_sim) <= expected_hybrid <= max(ae_sim, graph_sim)
+    assert min(ae_sim, vektor_sim) <= expected_hybrid <= max(ae_sim, vektor_sim)
 
 
 def test_similarity_order_makes_sense():
@@ -114,7 +109,7 @@ def test_detect_anomalies():
     else:
         print("   ✅ OK")
 
-    # ANOMALIE 2: Alle Werte = 0.5 → Zero-Vektor Bug (Graph-Embeddings)
+    # ANOMALIE 2: Alle Werte = 0.5 → Zero-Vektor Bug (Vektorbasiert)
     print("\n2️⃣  Test: Zero-Vektor Bug (alle = 0.5)")
     if all(abs(s - 0.5) < 0.01 for s in anomaly_all_same):
         print("   🚨 ANOMALIE: Zero-Vektor Bug detektiert! Alle Similarities = 0.5")
@@ -147,13 +142,13 @@ def test_detect_anomalies():
 """
 MANUELLER TEST in Streamlit:
 
-1. Wähle "Hybrid-Methode (Autoencoder + Graph)"
+1. Wähle "Hybrid-Methode"
 2. Query: Rotor_D001
 3. Prüfe Top-5 Ergebnisse:
 
 ERWARTETE WERTE (Beispiel):
 ┌─────────────┬────────────┬──────────────┬──────────┐
-│ Rotor       │ Autoencoder│ Graph-Embed  │ S_ges    │
+│ Rotor       │ Autoencoder│ Vektorbasiert│ S_ges    │
 ├─────────────┼────────────┼──────────────┼──────────┤
 │ Rotor_D002  │ 0.8823     │ 0.7241       │ 0.8188   │  ✅ Gut
 │ Rotor_D010  │ 0.8156     │ 0.6893       │ 0.7651   │  ✅ Gut
@@ -163,8 +158,8 @@ ERWARTETE WERTE (Beispiel):
 └─────────────┴────────────┴──────────────┴──────────┘
 
 WARNSIGNALE:
-- Graph-Embed alle = 0.5000  → 🚨 Zero-Vektor Bug
-- Autoencoder alle > 0.95    → ⚠️  Zu wenig Varianz
-- Beide < 0.30              → ⚠️  Normalisierungsfehler
-- Keine Variation (±0.01)   → ⚠️  Methode funktioniert nicht
+- Vektorbasiert alle = 0.5000 → 🚨 Zero-Vektor Bug
+- Autoencoder alle > 0.95     → ⚠️  Zu wenig Varianz
+- Beide < 0.30               → ⚠️  Normalisierungsfehler
+- Keine Variation (±0.01)    → ⚠️  Methode funktioniert nicht
 """

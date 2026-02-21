@@ -9,7 +9,7 @@ This project enables:
 * Generation of synthetic datasets (CSV)
 * **Multi-method similarity analysis**:
   * classical (weighted parameter similarity)
-  * ML-based (kNN, PCA, Autoencoder, K-Means)
+  * ML-based (Vector-based, PCA, Autoencoder, K-Means)
 * **Interactive web UI** (Streamlit) for visualization
 
 The system uses OWL ontologies for semantic modeling of rotor parameters and Apache Jena Fuseki as SPARQL endpoint.
@@ -167,14 +167,14 @@ Creates:
 
 | Method | Range | CV | Kendall-Tau | Rating |
 |---------|-------|----|----|-------|
-| k-NN | 54.7% | 11.2% | 1.0 | Excellent |
+| Vector-based | 54.7% | 11.2% | 1.0 | Excellent |
 | Autoencoder | 93.1% | 142.2% | 1.0 | Excellent |
 | Graph-Embeddings | 6.1% | 0.8% | 0.99 | Poor |
 
 Interpretation:
-* k-NN and Autoencoder are complementary (different feature spaces)
+* Vector-based and Autoencoder are complementary (different feature spaces)
 * Graph-Embeddings unsuitable with identical structure
-* Hybrid method uses 50% Autoencoder + 50% k-NN (Graph replaced)
+* Hybrid method uses 50% Autoencoder + 50% Vector-based (Graph replaced)
 
 Validation results are displayed in Streamlit UI at the bottom (expandable).
 

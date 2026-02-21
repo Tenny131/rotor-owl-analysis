@@ -9,7 +9,7 @@ Dieses Projekt ermöglicht:
 * Generierung synthetischer Datensätze (CSV)
 * **Multi-Methoden Similarity-Analyse**:
   * klassisch (gewichtete Parameter-Similarity)
-  * ML-basiert (kNN, PCA, Autoencoder, K-Means)
+  * ML-basiert (Vektorbasiert, PCA, Autoencoder, K-Means)
 * **Interaktive Web-UI** (Streamlit) zur Visualisierung
 
 Das System nutzt OWL-Ontologien zur semantischen Modellierung von Rotor-Parametern und Apache Jena Fuseki als SPARQL-Endpoint.

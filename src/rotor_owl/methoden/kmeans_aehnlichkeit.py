@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from rotor_owl.methoden.knn_aehnlichkeit import build_knn_embeddings
+from rotor_owl.methoden.vektorbasierte_aehnlichkeit import build_vektor_embeddings
 from rotor_owl.utils.math_utils import (
     cosine_similarity,
     berechne_gewichtete_gesamt_similarity,
@@ -120,7 +120,7 @@ def build_kmeans_models(
     """
     rotor_ids = sorted(features_by_rotor.keys())
 
-    base = build_knn_embeddings(features_by_rotor, stats)
+    base = build_vektor_embeddings(features_by_rotor, stats)
     base_norm = normalisiere_embeddings_struktur(base.vectors, rotor_ids)
 
     kategorien = sorted({kat for rotor_id in base_norm for kat in base_norm[rotor_id].keys()})
@@ -198,7 +198,7 @@ def berechne_topk_aehnlichkeiten_kmeans(
     if query_rotor_id not in rotor_ids:
         raise ValueError(f"Query Rotor nicht gefunden: {query_rotor_id}")
 
-    base = build_knn_embeddings(features_by_rotor, stats)
+    base = build_vektor_embeddings(features_by_rotor, stats)
     base_norm = normalisiere_embeddings_struktur(base.vectors, rotor_ids)
 
     modelle = build_kmeans_models(

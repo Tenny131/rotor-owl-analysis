@@ -41,10 +41,11 @@ PTYPE_TO_KATEGORIE_3 = {
     "MTRL": KAT_MTRL_PROC,
     "MFG": KAT_MTRL_PROC,
     "COST": KAT_MTRL_PROC,
-    # Anforderungen / Elektrik / Unknown
+    # Anforderungen / Elektrik / Unknown / Sonstige
     "REQ": KAT_REQ_ELEC,
     "ELEC": KAT_REQ_ELEC,
     "UNKNOWN": KAT_REQ_ELEC,
+    "MISC": KAT_REQ_ELEC,
 }
 
 

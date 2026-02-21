@@ -26,8 +26,8 @@ class _FeatureSpec:
 
 
 @dataclass(frozen=True)
-class _KNNEmbeddings:
-    """kNN-Embeddings pro Kategorie.
+class _VektorEmbeddings:
+    """Vektorbasierte Embeddings pro Kategorie.
 
     Attributes:
         specs: Kategorie -> Feature-Spezifikation
@@ -181,10 +181,10 @@ def _vektorisiere_rotor_fuer_kategorie(
     return vektor
 
 
-def build_knn_embeddings(
+def build_vektor_embeddings(
     features_by_rotor: dict[str, dict],
     stats: dict[tuple[str, str], tuple[float, float]],
-) -> _KNNEmbeddings:
+) -> _VektorEmbeddings:
     """
     Baut pro Kategorie Vektoren für alle Rotoren.
 
@@ -193,7 +193,7 @@ def build_knn_embeddings(
         stats (dict): Min/Max-Statistiken
 
     Returns:
-        _KNNEmbeddings: Embedding-Objekt mit Vektoren
+        _VektorEmbeddings: Embedding-Objekt mit Vektoren
     """
     specs = _build_feature_specs(features_by_rotor)
 
@@ -212,22 +212,22 @@ def build_knn_embeddings(
                 spec=spec,
             )
 
-    return _KNNEmbeddings(specs=specs, vectors=vektoren)
+    return _VektorEmbeddings(specs=specs, vectors=vektoren)
 
 
-def rotor_similarity_knn(
+def rotor_similarity_vektorbasiert(
     rotor_a_id: str,
     rotor_b_id: str,
-    embeddings: _KNNEmbeddings,
+    embeddings: _VektorEmbeddings,
     gewichtung_pro_kategorie: dict[str, float],
 ) -> tuple[float, dict[str, float]]:
     """
-    Berechnet Rotor-Similarity mit kNN/Cosine-Methode.
+    Berechnet Rotor-Similarity mit vektorbasierter Cosine-Methode.
 
     Args:
         rotor_a_id (str): ID des ersten Rotors
         rotor_b_id (str): ID des zweiten Rotors
-        embeddings (_KNNEmbeddings): Vorberechnete Feature-Vektoren
+        embeddings (_VektorEmbeddings): Vorberechnete Feature-Vektoren
         gewichtung_pro_kategorie (dict): Gewichte für die 3 Kategorien
 
     Returns:
@@ -248,20 +248,20 @@ def rotor_similarity_knn(
     return total, sim_pro_kat
 
 
-def berechne_topk_aehnlichkeiten_knn(
+def berechne_topk_aehnlichkeiten_vektorbasiert(
     query_rotor_id: str,
     rotor_ids: list[str],
-    embeddings: _KNNEmbeddings,
+    embeddings: _VektorEmbeddings,
     gewichtung_pro_kategorie: dict[str, float],
     top_k: int,
 ) -> list[tuple[str, float, dict[str, float]]]:
     """
-    Berechnet die Top-k ähnlichsten Rotoren.
+    Berechnet die Top-k ähnlichsten Rotoren (vektorbasiert).
 
     Args:
         query_rotor_id (str): ID des Abfrage-Rotors
         rotor_ids (list): Liste aller Rotor-IDs
-        embeddings (_KNNEmbeddings): Vorberechnete Embeddings
+        embeddings (_VektorEmbeddings): Vorberechnete Embeddings
         gewichtung_pro_kategorie (dict): Kategorie-Gewichte
         top_k (int): Anzahl der Ergebnisse
 
@@ -273,7 +273,7 @@ def berechne_topk_aehnlichkeiten_knn(
     for ziel_rotor_id in rotor_ids:
         if ziel_rotor_id == query_rotor_id:
             continue
-        total, sim_pro_kat = rotor_similarity_knn(
+        total, sim_pro_kat = rotor_similarity_vektorbasiert(
             rotor_a_id=query_rotor_id,
             rotor_b_id=ziel_rotor_id,
             embeddings=embeddings,

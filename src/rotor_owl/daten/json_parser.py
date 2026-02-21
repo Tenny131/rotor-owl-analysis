@@ -1,151 +1,407 @@
 """
-JSON-Parser für reale WVSC-Rotordaten.
+JSON-Parser für reale WVSC-Rotordaten – CSV-gesteuert.
 
-Liest die JSON-Dateien aus dem WVSC-Verzeichnis und konvertiert sie
-in das gleiche Format wie fetch_all_features() aus feature_fetcher.py,
-sodass alle nachgelagerten Algorithmen nahtlos funktionieren.
+Liest die handgepflegte Datei ``parameter_gefiltert.csv``, die festlegt
+welche JSON-Pfade extrahiert werden.  Für jeden Rotor wird das JSON
+rekursiv geflattened (gleiche Logik wie datenanalyse_realdaten.py) und
+anschließend nur die in der CSV definierten Pfade übernommen.
+
+Das Rückgabeformat ist identisch mit dem bisherigen:
+
+    features_by_rotor[rotor_id]["params"][(component, param)] = {
+        "value": ...,
+        "unit":  ...,
+        "ptype": ...,
+    }
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from collections import defaultdict
 from pathlib import Path
-from dataclasses import dataclass
+
+import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Standardpfad zum Verzeichnis mit den realen JSON-Dateien
+# Standardpfade
 # ---------------------------------------------------------------------------
 WVSC_STANDARD_VERZEICHNIS = Path(__file__).resolve().parents[3] / "data" / "real_data" / "wvsc"
-
-
-# ---------------------------------------------------------------------------
-# Datenklasse für Parameter-Mapping: JSON-Pfad → Feature-Schlüssel
-# ---------------------------------------------------------------------------
-@dataclass(frozen=True)
-class ParameterMapping:
-    """
-    Beschreibt die Zuordnung eines JSON-Felds zu einem Feature-Schlüssel.
-
-    :param component: Komponenten-ID (z.B. "C_WELLE")
-    :type component: str
-    :param parameter: Parameter-ID (z.B. "P_WELLE_LAENGE")
-    :type parameter: str
-    :param unit: Physikalische Einheit
-    :type unit: str
-    :param ptype: Parametertyp für Kategorie-Zuordnung (GEOM, STRUCT, DYN, MTRL, MFG, REQ, ELEC)
-    :type ptype: str
-    """
-
-    component: str
-    parameter: str
-    unit: str
-    ptype: str
-
-
-# ---------------------------------------------------------------------------
-# Zentrale Mapping-Tabelle: alle ausgewählten Parameter
-# ---------------------------------------------------------------------------
-
-# Welle (Shaft)
-MAPPING_WELLE_LAENGE = ParameterMapping("C_WELLE", "P_WELLE_LAENGE", "mm", "GEOM")
-MAPPING_WELLE_MASSE = ParameterMapping("C_WELLE", "P_WELLE_MASSE", "kg", "MTRL")
-MAPPING_WELLE_MATERIAL = ParameterMapping("C_WELLE", "P_WELLE_MATERIAL", "–", "MTRL")
-MAPPING_WELLE_DREHZAHL = ParameterMapping("C_WELLE", "P_WELLE_DREHZAHLBEREICH", "1/min", "DYN")
-MAPPING_WELLE_TORSIONSSTEIFIGKEIT = ParameterMapping(
-    "C_WELLE", "P_WELLE_TORSIONSSTEIFIGKEIT", "Nm/rad", "STRUCT"
+PARAMETER_CSV = (
+    Path(__file__).resolve().parents[3] / "data" / "real_data" / "parameter_gefiltert.csv"
 )
-MAPPING_WELLE_KUPPLUNGSMASSE = ParameterMapping("C_WELLE", "P_WELLE_KUPPLUNGSMASSE", "kg", "MTRL")
-MAPPING_WELLE_VOLUMEN = ParameterMapping("C_WELLE", "P_WELLE_VOLUMEN", "m³", "GEOM")
-MAPPING_WELLE_ZERSPANUNGSRATE = ParameterMapping("C_WELLE", "P_WELLE_ZERSPANUNGSRATE", "%", "MFG")
-MAPPING_WELLE_TRAEGHEITSMOMENT = ParameterMapping(
-    "C_WELLE", "P_WELLE_TRAEGHEITSMOMENT", "kg·m²", "DYN"
-)
-MAPPING_WELLE_MIN_SICHERHEIT = ParameterMapping("C_WELLE", "P_WELLE_MIN_SICHERHEIT", "–", "STRUCT")
-MAPPING_WELLE_PK_DREHMOMENT = ParameterMapping("C_WELLE", "P_WELLE_PK_DREHMOMENT", "Nm", "STRUCT")
-
-# Aktivteil (Laminated Core)
-MAPPING_AKTIV_LAENGE = ParameterMapping("C_AKTIVTEIL", "P_AKTIV_LAENGE", "mm", "GEOM")
-MAPPING_AKTIV_D_AUSSEN = ParameterMapping("C_AKTIVTEIL", "P_AKTIV_D_AUSSEN", "mm", "GEOM")
-MAPPING_AKTIV_D_INNEN = ParameterMapping("C_AKTIVTEIL", "P_AKTIV_D_INNEN", "mm", "GEOM")
-MAPPING_AKTIV_MASSE = ParameterMapping("C_AKTIVTEIL", "P_AKTIV_MASSE", "kg", "MTRL")
-MAPPING_AKTIV_MAGNETFEDER = ParameterMapping("C_AKTIVTEIL", "P_AKTIV_MAGNETFEDER", "N/mm", "STRUCT")
-MAPPING_AKTIV_AXIALKRAFT = ParameterMapping("C_AKTIVTEIL", "P_AKTIV_AXIALKRAFT_MAG", "N", "STRUCT")
-
-# Lüfter (Fan)
-MAPPING_LUEFTER_MASSE = ParameterMapping("C_LUEFTER", "P_LUEFTER_GEWICHT", "kg", "MTRL")
-MAPPING_LUEFTER_D = ParameterMapping("C_LUEFTER", "P_LUEFTER_D", "mm", "GEOM")
-MAPPING_LUEFTER_J = ParameterMapping("C_LUEFTER", "P_LUEFTER_J", "kg·mm²", "DYN")
-MAPPING_LUEFTER_ANZAHL = ParameterMapping("C_LUEFTER", "P_LUEFTER_ANZAHL", "–", "GEOM")
-
-# Rotor (Gesamtsystem)
-MAPPING_ROTOR_GESAMTMASSE = ParameterMapping("C_ROTOR", "P_ROTOR_GESAMTMASSE", "kg", "MTRL")
-MAPPING_ROTOR_NENNMOMENT = ParameterMapping("C_ROTOR", "P_ROTOR_NENNMOMENT", "Nm", "DYN")
-MAPPING_ROTOR_AXIALLAST = ParameterMapping("C_ROTOR", "P_ROTOR_AXIALLAST", "N", "STRUCT")
-MAPPING_ROTOR_MAX_TORSION = ParameterMapping("C_ROTOR", "P_ROTOR_MAX_TORSION", "Nm", "DYN")
-MAPPING_ROTOR_POLZAHL = ParameterMapping("C_ROTOR", "P_ROTOR_POLZAHL", "–", "ELEC")
-MAPPING_ROTOR_LAGERTYP = ParameterMapping("C_ROTOR", "P_ROTOR_LAGERTYP", "–", "REQ")
-MAPPING_ROTOR_BAUFORM = ParameterMapping("C_ROTOR", "P_ROTOR_BAUFORM", "–", "REQ")
-MAPPING_ROTOR_C_MASS = ParameterMapping("C_ROTOR", "P_ROTOR_C_MASS", "mm", "GEOM")
-
-# Rotordynamik (Output)
-MAPPING_ROTOR_EIGENFREQ_1 = ParameterMapping("C_ROTOR", "P_ROTOR_EIGENFREQ_1", "Hz", "DYN")
-MAPPING_ROTOR_EIGENFREQ_2 = ParameterMapping("C_ROTOR", "P_ROTOR_EIGENFREQ_2", "Hz", "DYN")
-MAPPING_ROTOR_MAX_BIEGUNG = ParameterMapping("C_ROTOR", "P_ROTOR_MAX_BIEGUNG", "mm", "STRUCT")
-MAPPING_ROTOR_BIEGUNG_KERN = ParameterMapping("C_ROTOR", "P_ROTOR_BIEGUNG_KERN", "mm", "STRUCT")
-MAPPING_ROTOR_LAGERABSTAND = ParameterMapping("C_ROTOR", "P_ROTOR_LAGERABSTAND", "mm", "GEOM")
-MAPPING_ROTOR_KERNMITTE = ParameterMapping("C_ROTOR", "P_ROTOR_KERNMITTE", "mm", "GEOM")
-
-# Lager (Bearing)
-MAPPING_LAGER_BEZEICHNUNG = ParameterMapping("C_LAGER", "P_LAGER_BEZEICHNUNG", "–", "GEOM")
-MAPPING_LAGER_BAUREIHE = ParameterMapping("C_LAGER", "P_LAGER_BAUREIHE", "–", "GEOM")
-MAPPING_LAGER_TYP_DETAIL = ParameterMapping("C_LAGER", "P_LAGER_TYP_DETAIL", "–", "REQ")
-MAPPING_LAGER_INNER_D = ParameterMapping("C_LAGER", "P_LAGER_INNER_D", "mm", "GEOM")
-MAPPING_LAGER_OUTER_D = ParameterMapping("C_LAGER", "P_LAGER_OUTER_D", "mm", "GEOM")
-MAPPING_LAGER_DYN_TRAGZAHL = ParameterMapping("C_LAGER", "P_LAGER_DYN_TRAGZAHL", "N", "STRUCT")
-MAPPING_LAGER_STAT_TRAGZAHL = ParameterMapping("C_LAGER", "P_LAGER_STAT_TRAGZAHL", "N", "STRUCT")
-MAPPING_LAGER_LEBENSDAUER = ParameterMapping("C_LAGER", "P_LAGER_LEBENSDAUER", "h", "REQ")
-
-# MLFB-Baureihe
-MAPPING_ROTOR_MLFB = ParameterMapping("C_ROTOR", "P_ROTOR_MLFB_BAUREIHE", "–", "REQ")
-
 
 # ---------------------------------------------------------------------------
-# Hilfsfunktionen für sicheren Zugriff auf verschachtelte JSON-Strukturen
+# Fachkategorie → ptype-Mapping (wie im bisherigen Parser)
 # ---------------------------------------------------------------------------
+_PTYPE_MAP: dict[str, str] = {
+    "Dynamik": "DYN",
+    "Struktur": "STRUCT",
+    "Geometrie": "GEOM",
+    "Material/Masse": "MTRL",
+    "Fertigung": "MFG",
+    "Anforderung": "REQ",
+    "Elektrisch": "ELEC",
+}
+
+# ---------------------------------------------------------------------------
+# Skip-Patterns beim Flatten (identisch mit datenanalyse_realdaten.py)
+# ---------------------------------------------------------------------------
+_SKIP_PATTERNS = [
+    "module_info",
+    "OrderData",
+    "additional_data",
+    "tag",
+    "machine_template",
+    "username",
+    "created",
+    "last_updated",
+    "status_code",
+    "versions.",
+    "calculation.identifier",
+    "calculation.remarks",
+    "calculation.user",
+    "calculation.time",
+    "info.pid",
+    "info.tra_suffix",
+    "info.mlfb",
+    "info.tra",
+]
 
 
-def _sicherer_zugriff(daten: dict, *schluessel, fallback=None):
+def _sollte_uebersprungen_werden(pfad: str) -> bool:
+    for pattern in _SKIP_PATTERNS:
+        if pattern in pfad:
+            return True
+    return False
+
+
+# ===================================================================
+# CSV-Parameterdefinition laden
+# ===================================================================
+
+
+def _lade_parameter_csv(
+    csv_pfad: Path | str | None = None,
+) -> dict[str, dict]:
     """
-    Navigiert sicher durch verschachtelte Dicts.
+    Liest ``parameter_gefiltert.csv`` und gibt ein Dict zurück:
 
-    :param daten: Verschachteltes Dictionary
-    :type daten: dict
-    :param schluessel: Schlüssel-Kette zum Zielwert
-    :type schluessel: str
-    :param fallback: Rückgabewert wenn Pfad nicht existiert
-    :return: Gefundener Wert oder fallback
+        json_pfad → {"component", "parameter", "unit", "ptype", "datentyp"}
+
+    Für *Nicht zugeordnet*-Zeilen (``P_Name == "–"``) wird:
+
+    - ``component`` = ``"C_SONSTIGE"``
+    - ``parameter`` = aus dem JSON-Pfad abgeleitet
     """
-    aktuell = daten
-    for key in schluessel:
-        if not isinstance(aktuell, dict):
-            return fallback
-        aktuell = aktuell.get(key, fallback)
-        if aktuell is fallback:
-            return fallback
-    return aktuell
+    pfad = Path(csv_pfad) if csv_pfad else PARAMETER_CSV
+    df = pd.read_csv(pfad, sep=",", encoding="utf-8-sig")
+
+    mapping: dict[str, dict] = {}
+
+    for _, row in df.iterrows():
+        json_pfad = str(row["Parameter"]).strip()
+        p_name = str(row["P_Name"]).strip()
+        komponente = str(row["Komponente"]).strip()
+        einheit = str(row.get("Einheit_", "–")).strip()
+        fachkat = str(row.get("Fachkategorie", "–")).strip()
+        datentyp = str(row.get("Datentyp", "numerisch")).strip()
+
+        # Placeholder für nicht-zugeordnete Parameter
+        if komponente in ("–", "nan", ""):
+            komponente = "C_SONSTIGE"
+        if p_name in ("–", "nan", ""):
+            p_name = _erzeuge_parameter_id(json_pfad)
+
+        ptype = _PTYPE_MAP.get(fachkat, "MISC")
+
+        mapping[json_pfad] = {
+            "component": komponente,
+            "parameter": p_name,
+            "unit": einheit if einheit not in ("–", "nan") else "",
+            "ptype": ptype,
+            "datentyp": datentyp,
+        }
+
+    return mapping
+
+
+def _erzeuge_parameter_id(json_pfad: str) -> str:
+    """
+    Erzeugt eine lesbare Parameter-ID aus einem JSON-Pfad.
+
+    Beispiel::
+
+        RotorWorkflow.output.output.roller_bearings.output.NDE.forces.radial
+        → P_NDE_FORCES_RADIAL
+    """
+    teile = json_pfad.replace(".", "_").split("_")
+    skip = {
+        "rotorworkflow",
+        "edimworkflow",
+        "simocalcworkflow",
+        "output",
+        "input",
+        "results",
+    }
+    relevant = [t for t in teile if t.lower() not in skip and t != ""]
+    # Maximal letzte 5 Segmente
+    relevant = relevant[-5:] if len(relevant) > 5 else relevant
+    name = "_".join(relevant).upper()
+    while "__" in name:
+        name = name.replace("__", "_")
+    name = name.strip("_")
+    return f"P_{name}" if name else f"P_{json_pfad.replace('.', '_').upper()}"
+
+
+# ===================================================================
+# JSON-Flatten – gleiche Logik wie datenanalyse_realdaten.py
+# ===================================================================
+
+
+def _flatten_json(obj: dict | list, prefix: str = "") -> dict[str, object]:
+    """Flattened ein verschachteltes JSON-Objekt rekursiv."""
+    ergebnis: dict[str, object] = {}
+
+    if isinstance(obj, dict):
+        for key, val in obj.items():
+            neuer_pfad = f"{prefix}.{key}" if prefix else key
+
+            if _sollte_uebersprungen_werden(neuer_pfad):
+                continue
+
+            if isinstance(val, dict):
+                ergebnis.update(_flatten_json(val, neuer_pfad))
+            elif isinstance(val, list):
+                _verarbeite_liste(val, neuer_pfad, ergebnis)
+            elif val is not None:
+                ergebnis[neuer_pfad] = val
+
+    return ergebnis
+
+
+def _verarbeite_liste(lst: list, pfad: str, ergebnis: dict):
+    """Verarbeitet JSON-Listen: Aggregation oder Segmentverarbeitung."""
+    if not lst:
+        return
+
+    if pfad.endswith("rotor.segments"):
+        _verarbeite_segmente(lst, ergebnis)
+        return
+
+    if "shaft_safety.output" in pfad or "parallelkey_safety.output" in pfad:
+        _verarbeite_sicherheitsliste(lst, pfad, ergebnis)
+        return
+
+    if "roller_bearings.output.DE" in pfad or "roller_bearings.output.NDE" in pfad:
+        _verarbeite_lagerliste(lst, pfad, ergebnis)
+        return
+
+    if "relubrication.masses" in pfad:
+        return
+
+    if all(isinstance(x, (int, float)) for x in lst):
+        if len(lst) > 1:
+            arr = np.array([float(x) for x in lst])
+            ergebnis[f"{pfad}._min"] = float(np.min(arr))
+            ergebnis[f"{pfad}._max"] = float(np.max(arr))
+            ergebnis[f"{pfad}._mean"] = float(np.mean(arr))
+            ergebnis[f"{pfad}._count"] = len(arr)
+        elif len(lst) == 1:
+            ergebnis[pfad] = lst[0]
+        return
+
+    if all(isinstance(x, dict) for x in lst):
+        if len(lst) <= 3:
+            for i, item in enumerate(lst):
+                sub = _flatten_json(item, f"{pfad}[{i}]")
+                ergebnis.update(sub)
+        return
+
+
+def _verarbeite_segmente(segmente: list[dict], ergebnis: dict):
+    """Aggregiert Rotor-Segmente nach Typ."""
+    typ_gruppen: dict[str, list[dict]] = defaultdict(list)
+    for seg in segmente:
+        seg_typ = seg.get("type", "unknown")
+        typ_gruppen[seg_typ].append(seg)
+
+    ergebnis["segments._total_count"] = len(segmente)
+    ergebnis["segments._type_count"] = len(typ_gruppen)
+
+    for typ, gruppe in typ_gruppen.items():
+        basis = f"segments.{typ}"
+        ergebnis[f"{basis}._count"] = len(gruppe)
+
+        num_felder = [
+            "length",
+            "outer_diameter",
+            "inner_diameter",
+            "mass",
+            "coupling_mass",
+            "polar_inertia",
+            "axial_force",
+            "diametral_inertia",
+        ]
+        for feld in num_felder:
+            werte = []
+            for seg in gruppe:
+                v = seg.get(feld)
+                if v is not None:
+                    try:
+                        werte.append(float(v))
+                    except (ValueError, TypeError):
+                        pass
+            if werte:
+                if len(werte) == 1:
+                    ergebnis[f"{basis}.{feld}"] = werte[0]
+                else:
+                    ergebnis[f"{basis}.{feld}._sum"] = sum(werte)
+                    ergebnis[f"{basis}.{feld}._max"] = max(werte)
+                    ergebnis[f"{basis}.{feld}._min"] = min(werte)
+
+        for feld in ["description", "designation"]:
+            werte = [seg.get(feld) for seg in gruppe if seg.get(feld)]
+            if werte:
+                ergebnis[f"{basis}.{feld}"] = (
+                    werte[0] if len(werte) == 1 else "; ".join(str(v) for v in werte[:3])
+                )
+
+        pk_segmente = [seg for seg in gruppe if "parallel_key" in seg]
+        if pk_segmente:
+            pk = pk_segmente[0]["parallel_key"]
+            for k, v in pk.items():
+                if v is not None:
+                    ergebnis[f"{basis}.parallel_key.{k}"] = v
+
+        stiff_segmente = [seg for seg in gruppe if "stiffness" in seg]
+        if stiff_segmente:
+            stiff = stiff_segmente[0]["stiffness"]
+            for k, v in stiff.items():
+                if v is not None:
+                    ergebnis[f"{basis}.stiffness.{k}"] = v
+
+        shoulder_segmente = [seg for seg in gruppe if "shoulder" in seg]
+        if shoulder_segmente:
+            sh = shoulder_segmente[0].get("shoulder", {})
+            for pos, details in sh.items():
+                if isinstance(details, dict):
+                    for k, v in details.items():
+                        if v is not None:
+                            ergebnis[f"{basis}.shoulder.{pos}.{k}"] = v
+
+        func_segmente = [seg for seg in gruppe if "function" in seg]
+        if func_segmente:
+            alle_funcs = []
+            for seg in func_segmente:
+                funcs = seg.get("function", [])
+                alle_funcs.extend(funcs)
+            if alle_funcs:
+                ergebnis[f"{basis}._functions"] = "; ".join(sorted(set(alle_funcs)))
+
+
+def _verarbeite_sicherheitsliste(eintraege: list[dict], pfad: str, ergebnis: dict):
+    """Aggregiert Shaft-Safety/Parallelkey Ergebnisse."""
+    ergebnis[f"{pfad}._count"] = len(eintraege)
+
+    if "shaft_safety" in pfad:
+        fatigue_vals = []
+        yield_vals = []
+        for e in eintraege:
+            safety = e.get("safety", {})
+            fs = safety.get("fatigue_strength")
+            ys = safety.get("yield_strength")
+            if isinstance(fs, (int, float)):
+                fatigue_vals.append(float(fs))
+            if isinstance(ys, (int, float)):
+                yield_vals.append(float(ys))
+        if fatigue_vals:
+            ergebnis[f"{pfad}.fatigue_strength._min"] = min(fatigue_vals)
+            ergebnis[f"{pfad}.fatigue_strength._max"] = max(fatigue_vals)
+            ergebnis[f"{pfad}.fatigue_strength._mean"] = float(np.mean(fatigue_vals))
+        if yield_vals:
+            ergebnis[f"{pfad}.yield_strength._min"] = min(yield_vals)
+            ergebnis[f"{pfad}.yield_strength._max"] = max(yield_vals)
+            ergebnis[f"{pfad}.yield_strength._mean"] = float(np.mean(yield_vals))
+
+    elif "parallelkey_safety" in pfad:
+        for e in eintraege:
+            for key in ["transmittable_torque", "shaft_diameter", "position"]:
+                v = e.get(key)
+                if v is not None:
+                    ergebnis[f"{pfad}.{key}"] = v
+            for sub in ["key", "shaft"]:
+                safety_sub = e.get("safety", {}).get(sub, {})
+                for k, v in safety_sub.items():
+                    if v is not None:
+                        ergebnis[f"{pfad}.safety.{sub}.{k}"] = v
+
+
+def _verarbeite_lagerliste(eintraege: list[dict], pfad: str, ergebnis: dict):
+    """Aggregiert Roller-Bearing DE/NDE Ergebnisse (erstes Lager)."""
+    if not eintraege:
+        return
+    erstes = eintraege[0]
+
+    def _flat_bearing(obj, p):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                np_ = f"{p}.{k}"
+                if isinstance(v, dict):
+                    _flat_bearing(v, np_)
+                elif isinstance(v, (int, float)):
+                    ergebnis[np_] = v
+                elif isinstance(v, str):
+                    ergebnis[np_] = v
+        elif isinstance(obj, (int, float)):
+            ergebnis[p] = obj
+
+    _flat_bearing(erstes, pfad)
+
+
+def _normalisiere_bearing_properties(rotor_params: dict) -> dict:
+    """
+    Normalisiert bearing_properties: variable Lagernamen → 'bearing_1', 'bearing_2'.
+    """
+    normalisiert = {}
+    lager_keys: list[str] = []
+    bp_prefix = "RotorWorkflow.input.bearing_properties."
+    meta_keys = {"axial_preload_forces", "temperature_rise", "grease_slinger", "grease", "type"}
+
+    for pfad, wert in rotor_params.items():
+        if not pfad.startswith(bp_prefix):
+            normalisiert[pfad] = wert
+            continue
+
+        rest = pfad[len(bp_prefix) :]
+        teile = rest.split(".", 1)
+        top_key = teile[0]
+
+        if top_key in meta_keys:
+            normalisiert[pfad] = wert
+        else:
+            if top_key not in lager_keys:
+                lager_keys.append(top_key)
+            idx = lager_keys.index(top_key) + 1
+            if len(teile) > 1:
+                neuer_pfad = f"{bp_prefix}bearing_{idx}.{teile[1]}"
+            else:
+                neuer_pfad = f"{bp_prefix}bearing_{idx}"
+            normalisiert[neuer_pfad] = wert
+
+    return normalisiert
+
+
+# ===================================================================
+# Hilfsfunktion: Wert-Konvertierung
+# ===================================================================
 
 
 def _safe_float(wert) -> float | None:
-    """
-    Konvertiert einen Wert sicher zu float.
-
-    :param wert: Beliebiger Wert
-    :return: float oder None bei Fehlschlag
-    :rtype: float | None
-    """
     if wert is None:
         return None
     try:
@@ -154,92 +410,38 @@ def _safe_float(wert) -> float | None:
         return None
 
 
-def _parameter_eintrag(wert, mapping: ParameterMapping, erzwinge_string: bool = False) -> dict:
+def _konvertiere_wert(wert, datentyp: str):
+    """Konvertiert einen Rohwert je nach Datentyp."""
+    if wert is None:
+        return None
+    if datentyp == "kategorisch":
+        return str(wert)
+    f = _safe_float(wert)
+    if f is not None:
+        return f
+    return str(wert) if isinstance(wert, str) else wert
+
+
+# ===================================================================
+# Kern: einzelne JSON-Datei parsen und gefilterte Parameter extrahieren
+# ===================================================================
+
+
+def _parse_einzelne_json(
+    dateipfad: Path,
+    param_mapping: dict[str, dict],
+) -> tuple[str, dict] | None:
     """
-    Erzeugt einen einzelnen Parameter-Eintrag im Feature-Fetcher-Format.
+    Liest eine WVSC-JSON-Datei, flattened sie und extrahiert nur die
+    Parameter, die in ``param_mapping`` definiert sind.
 
-    :param wert: Parameterwert (numerisch oder kategorisch)
-    :param mapping: Zugehöriges ParameterMapping
-    :type mapping: ParameterMapping
-    :param erzwinge_string: Wenn True, wird der Wert immer als String behandelt (für kategorische Parameter)
-    :type erzwinge_string: bool
-    :return: Dict mit value, unit, ptype
-    :rtype: dict
-    """
-    if erzwinge_string:
-        endwert = str(wert) if wert is not None else None
-    elif isinstance(wert, (int, float)):
-        endwert = float(wert)
-    elif isinstance(wert, str):
-        numerisch = _safe_float(wert)
-        endwert = numerisch if numerisch is not None else wert
-    else:
-        endwert = None
-
-    return {
-        "value": endwert,
-        "unit": mapping.unit,
-        "ptype": mapping.ptype,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Segment-Aggregation: mehrere Segmente eines Typs zusammenfassen
-# ---------------------------------------------------------------------------
-
-
-def _segmente_nach_typ(segmente: list[dict]) -> dict[str, list[dict]]:
-    """
-    Gruppiert Rotor-Segmente nach ihrem Typ-Feld.
-
-    :param segmente: Liste aller Segment-Dicts aus dem JSON
-    :type segmente: list[dict]
-    :return: Dict von Typ → Liste der Segmente
-    :rtype: dict[str, list[dict]]
-    """
-    gruppiert: dict[str, list[dict]] = {}
-    for segment in segmente:
-        segment_typ = segment.get("type", "unknown")
-        if segment_typ not in gruppiert:
-            gruppiert[segment_typ] = []
-        gruppiert[segment_typ].append(segment)
-    return gruppiert
-
-
-def _erstes_lager_aus_properties(bearing_properties: dict) -> dict | None:
-    """
-    Extrahiert das erste benannte Lager aus bearing_properties.
-
-    :param bearing_properties: bearing_properties-Dict aus dem JSON
-    :type bearing_properties: dict
-    :return: Lager-Dict mit designation, type etc. oder None
-    :rtype: dict | None
-    """
-    for _, wert in bearing_properties.items():
-        if isinstance(wert, dict) and "designation" in wert:
-            return wert
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Kernfunktion: einzelnes JSON → Parameter-Dict
-# ---------------------------------------------------------------------------
-
-
-def _parse_einzelne_json(dateipfad: Path) -> tuple[str, dict] | None:
-    """
-    Liest eine einzelne WVSC-JSON-Datei und extrahiert alle Parameter.
-
-    :param dateipfad: Pfad zur JSON-Datei
-    :type dateipfad: Path
-    :return: Tuple (rotor_id, {"params": {...}}) oder None bei Fehler
-    :rtype: tuple[str, dict] | None
+    :return: (rotor_id, {"params": {(component, param): {"value", "unit", "ptype"}}})
     """
     try:
         with dateipfad.open("r", encoding="utf-8") as datei:
             rohdaten = json.load(datei)
     except (json.JSONDecodeError, OSError) as fehler:
-        logger.warning("JSON-Datei konnte nicht gelesen werden: %s – %s", dateipfad.name, fehler)
+        logger.warning("JSON konnte nicht gelesen werden: %s – %s", dateipfad.name, fehler)
         return None
 
     rotor_id = rohdaten.get("machine_id")
@@ -247,281 +449,50 @@ def _parse_einzelne_json(dateipfad: Path) -> tuple[str, dict] | None:
         logger.warning("Kein machine_id in %s", dateipfad.name)
         return None
 
-    rotor_workflow = rohdaten.get("RotorWorkflow", {})
-    eingabe = rotor_workflow.get("input", {})
-    ausgabe = rotor_workflow.get("output", {})
+    # JSON rekursiv flatten (gleiche Logik wie datenanalyse_realdaten.py)
+    alle_params = _flatten_json(rohdaten)
+    alle_params = _normalisiere_bearing_properties(alle_params)
 
+    # Nur die in der CSV definierten Pfade extrahieren
     parameter: dict[tuple[str, str], dict] = {}
 
-    # ------------------------------------------------------------------
-    # INPUT-Parameter
-    # ------------------------------------------------------------------
+    for json_pfad, meta in param_mapping.items():
+        wert = alle_params.get(json_pfad)
+        if wert is None:
+            continue
 
-    betriebsdaten = eingabe.get("operational_data", {})
-    last = eingabe.get("load", {})
-    materialien = eingabe.get("materials", {})
-    bearing_properties = eingabe.get("bearing_properties", {})
-    segmente = eingabe.get("rotor", {}).get("segments", [])
-    segmente_gruppiert = _segmente_nach_typ(segmente)
+        endwert = _konvertiere_wert(wert, meta["datentyp"])
+        if endwert is None:
+            continue
 
-    # Welle – Betriebsdaten
-    parameter[(MAPPING_WELLE_DREHZAHL.component, MAPPING_WELLE_DREHZAHL.parameter)] = (
-        _parameter_eintrag(betriebsdaten.get("operational_speed"), MAPPING_WELLE_DREHZAHL)
-    )
-    parameter[(MAPPING_WELLE_MATERIAL.component, MAPPING_WELLE_MATERIAL.parameter)] = (
-        _parameter_eintrag(
-            _sicherer_zugriff(materialien, "shaft_material", "name"),
-            MAPPING_WELLE_MATERIAL,
-        )
-    )
-
-    # Rotor – Lastdaten
-    parameter[(MAPPING_ROTOR_NENNMOMENT.component, MAPPING_ROTOR_NENNMOMENT.parameter)] = (
-        _parameter_eintrag(last.get("nominal_torque"), MAPPING_ROTOR_NENNMOMENT)
-    )
-    parameter[(MAPPING_ROTOR_MAX_TORSION.component, MAPPING_ROTOR_MAX_TORSION.parameter)] = (
-        _parameter_eintrag(
-            _sicherer_zugriff(last, "torsion", "maximum"),
-            MAPPING_ROTOR_MAX_TORSION,
-        )
-    )
-    parameter[(MAPPING_ROTOR_AXIALLAST.component, MAPPING_ROTOR_AXIALLAST.parameter)] = (
-        _parameter_eintrag(last.get("axial_load"), MAPPING_ROTOR_AXIALLAST)
-    )
-
-    # Rotor – kategorische Eingabedaten
-    parameter[(MAPPING_ROTOR_POLZAHL.component, MAPPING_ROTOR_POLZAHL.parameter)] = (
-        _parameter_eintrag(eingabe.get("pole_number"), MAPPING_ROTOR_POLZAHL)
-    )
-    parameter[(MAPPING_ROTOR_LAGERTYP.component, MAPPING_ROTOR_LAGERTYP.parameter)] = (
-        _parameter_eintrag(eingabe.get("bearing_type"), MAPPING_ROTOR_LAGERTYP)
-    )
-    parameter[(MAPPING_ROTOR_BAUFORM.component, MAPPING_ROTOR_BAUFORM.parameter)] = (
-        _parameter_eintrag(betriebsdaten.get("construction_type"), MAPPING_ROTOR_BAUFORM)
-    )
-    parameter[(MAPPING_ROTOR_C_MASS.component, MAPPING_ROTOR_C_MASS.parameter)] = (
-        _parameter_eintrag(eingabe.get("c_dimension"), MAPPING_ROTOR_C_MASS)
-    )
-
-    # MLFB-Baureihe (erste 7 Zeichen der machine_id)
-    mlfb_baureihe = rotor_id[:7] if len(rotor_id) >= 7 else rotor_id
-    parameter[(MAPPING_ROTOR_MLFB.component, MAPPING_ROTOR_MLFB.parameter)] = _parameter_eintrag(
-        mlfb_baureihe, MAPPING_ROTOR_MLFB
-    )
-
-    # ------------------------------------------------------------------
-    # Segment-basierte Parameter
-    # ------------------------------------------------------------------
-
-    # Aktivteil (Laminated Core) – genau 1 pro Rotor
-    kernpakete = segmente_gruppiert.get("laminated_core", [])
-    if kernpakete:
-        kern = kernpakete[0]
-        parameter[(MAPPING_AKTIV_LAENGE.component, MAPPING_AKTIV_LAENGE.parameter)] = (
-            _parameter_eintrag(kern.get("length"), MAPPING_AKTIV_LAENGE)
-        )
-        parameter[(MAPPING_AKTIV_D_AUSSEN.component, MAPPING_AKTIV_D_AUSSEN.parameter)] = (
-            _parameter_eintrag(kern.get("outer_diameter"), MAPPING_AKTIV_D_AUSSEN)
-        )
-        parameter[(MAPPING_AKTIV_D_INNEN.component, MAPPING_AKTIV_D_INNEN.parameter)] = (
-            _parameter_eintrag(kern.get("inner_diameter"), MAPPING_AKTIV_D_INNEN)
-        )
-        parameter[(MAPPING_AKTIV_MASSE.component, MAPPING_AKTIV_MASSE.parameter)] = (
-            _parameter_eintrag(kern.get("mass"), MAPPING_AKTIV_MASSE)
-        )
-        parameter[(MAPPING_AKTIV_MAGNETFEDER.component, MAPPING_AKTIV_MAGNETFEDER.parameter)] = (
-            _parameter_eintrag(kern.get("magnetic_spring"), MAPPING_AKTIV_MAGNETFEDER)
-        )
-        parameter[(MAPPING_AKTIV_AXIALKRAFT.component, MAPPING_AKTIV_AXIALKRAFT.parameter)] = (
-            _parameter_eintrag(kern.get("axial_magnetic_force"), MAPPING_AKTIV_AXIALKRAFT)
-        )
-
-    # Lüfter (Fan) – Aggregation über alle Fan-Segmente
-    luefter_segmente = segmente_gruppiert.get("fan", [])
-    anzahl_luefter = len(luefter_segmente)
-    parameter[(MAPPING_LUEFTER_ANZAHL.component, MAPPING_LUEFTER_ANZAHL.parameter)] = (
-        _parameter_eintrag(anzahl_luefter, MAPPING_LUEFTER_ANZAHL)
-    )
-    if luefter_segmente:
-        summe_masse = sum(_safe_float(s.get("mass")) or 0.0 for s in luefter_segmente)
-        max_durchmesser = max(
-            (_safe_float(s.get("outer_diameter")) or 0.0 for s in luefter_segmente),
-            default=0.0,
-        )
-        summe_traegheit = sum(_safe_float(s.get("polar_inertia")) or 0.0 for s in luefter_segmente)
-
-        parameter[(MAPPING_LUEFTER_MASSE.component, MAPPING_LUEFTER_MASSE.parameter)] = (
-            _parameter_eintrag(summe_masse, MAPPING_LUEFTER_MASSE)
-        )
-        parameter[(MAPPING_LUEFTER_D.component, MAPPING_LUEFTER_D.parameter)] = _parameter_eintrag(
-            max_durchmesser, MAPPING_LUEFTER_D
-        )
-        parameter[(MAPPING_LUEFTER_J.component, MAPPING_LUEFTER_J.parameter)] = _parameter_eintrag(
-            summe_traegheit, MAPPING_LUEFTER_J
-        )
-
-    # Wellenende (Shaft End) – erstes Wellenende für Kupplungsmasse + Passfeder
-    wellenenden = segmente_gruppiert.get("shaft_end", [])
-    if wellenenden:
-        wellenende = wellenenden[0]
-        parameter[
-            (MAPPING_WELLE_KUPPLUNGSMASSE.component, MAPPING_WELLE_KUPPLUNGSMASSE.parameter)
-        ] = _parameter_eintrag(wellenende.get("coupling_mass"), MAPPING_WELLE_KUPPLUNGSMASSE)
-
-    # ------------------------------------------------------------------
-    # Lager-Parameter aus bearing_properties
-    # ------------------------------------------------------------------
-    erstes_lager = _erstes_lager_aus_properties(bearing_properties)
-    if erstes_lager:
-        parameter[(MAPPING_LAGER_BEZEICHNUNG.component, MAPPING_LAGER_BEZEICHNUNG.parameter)] = (
-            _parameter_eintrag(
-                erstes_lager.get("designation"), MAPPING_LAGER_BEZEICHNUNG, erzwinge_string=True
-            )
-        )
-        parameter[(MAPPING_LAGER_BAUREIHE.component, MAPPING_LAGER_BAUREIHE.parameter)] = (
-            _parameter_eintrag(
-                erstes_lager.get("bearing_series"), MAPPING_LAGER_BAUREIHE, erzwinge_string=True
-            )
-        )
-        parameter[(MAPPING_LAGER_TYP_DETAIL.component, MAPPING_LAGER_TYP_DETAIL.parameter)] = (
-            _parameter_eintrag(erstes_lager.get("type"), MAPPING_LAGER_TYP_DETAIL)
-        )
-        parameter[(MAPPING_LAGER_INNER_D.component, MAPPING_LAGER_INNER_D.parameter)] = (
-            _parameter_eintrag(erstes_lager.get("inner_diameter"), MAPPING_LAGER_INNER_D)
-        )
-        parameter[(MAPPING_LAGER_OUTER_D.component, MAPPING_LAGER_OUTER_D.parameter)] = (
-            _parameter_eintrag(erstes_lager.get("outer_diameter"), MAPPING_LAGER_OUTER_D)
-        )
-        parameter[(MAPPING_LAGER_DYN_TRAGZAHL.component, MAPPING_LAGER_DYN_TRAGZAHL.parameter)] = (
-            _parameter_eintrag(erstes_lager.get("basic_dynamic_load"), MAPPING_LAGER_DYN_TRAGZAHL)
-        )
-        parameter[
-            (MAPPING_LAGER_STAT_TRAGZAHL.component, MAPPING_LAGER_STAT_TRAGZAHL.parameter)
-        ] = _parameter_eintrag(erstes_lager.get("basic_static_load"), MAPPING_LAGER_STAT_TRAGZAHL)
-
-    # ------------------------------------------------------------------
-    # OUTPUT-Parameter (berechnete Ergebnisse)
-    # ------------------------------------------------------------------
-    ausgabe_ergebnisse = _sicherer_zugriff(ausgabe, "output") or {}
-
-    # Shaft-Form-Ergebnisse
-    wellenform = _sicherer_zugriff(ausgabe_ergebnisse, "form", "output", "shaft") or {}
-
-    parameter[(MAPPING_WELLE_LAENGE.component, MAPPING_WELLE_LAENGE.parameter)] = (
-        _parameter_eintrag(wellenform.get("length"), MAPPING_WELLE_LAENGE)
-    )
-    parameter[(MAPPING_WELLE_MASSE.component, MAPPING_WELLE_MASSE.parameter)] = _parameter_eintrag(
-        wellenform.get("mass"), MAPPING_WELLE_MASSE
-    )
-    parameter[
-        (MAPPING_WELLE_TORSIONSSTEIFIGKEIT.component, MAPPING_WELLE_TORSIONSSTEIFIGKEIT.parameter)
-    ] = _parameter_eintrag(wellenform.get("torsional_stiffness"), MAPPING_WELLE_TORSIONSSTEIFIGKEIT)
-    parameter[(MAPPING_WELLE_VOLUMEN.component, MAPPING_WELLE_VOLUMEN.parameter)] = (
-        _parameter_eintrag(wellenform.get("volume"), MAPPING_WELLE_VOLUMEN)
-    )
-    parameter[
-        (MAPPING_WELLE_ZERSPANUNGSRATE.component, MAPPING_WELLE_ZERSPANUNGSRATE.parameter)
-    ] = _parameter_eintrag(wellenform.get("metal_removal_rate"), MAPPING_WELLE_ZERSPANUNGSRATE)
-    parameter[
-        (MAPPING_WELLE_TRAEGHEITSMOMENT.component, MAPPING_WELLE_TRAEGHEITSMOMENT.parameter)
-    ] = _parameter_eintrag(wellenform.get("mass_moment_of_inertia"), MAPPING_WELLE_TRAEGHEITSMOMENT)
-    parameter[(MAPPING_ROTOR_LAGERABSTAND.component, MAPPING_ROTOR_LAGERABSTAND.parameter)] = (
-        _parameter_eintrag(
-            _sicherer_zugriff(wellenform, "bearing_positions", "distance"),
-            MAPPING_ROTOR_LAGERABSTAND,
-        )
-    )
-    parameter[(MAPPING_ROTOR_KERNMITTE.component, MAPPING_ROTOR_KERNMITTE.parameter)] = (
-        _parameter_eintrag(wellenform.get("core_center"), MAPPING_ROTOR_KERNMITTE)
-    )
-
-    # Shaft Safety – minimaler Sicherheitsfaktor
-    sicherheitswerte = (
-        _sicherer_zugriff(ausgabe_ergebnisse, "shaft", "output", "shaft_safety", "output") or []
-    )
-    alle_sicherheiten = [
-        eintrag.get("safety", {}).get("fatigue_strength")
-        for eintrag in sicherheitswerte
-        if isinstance(eintrag.get("safety", {}).get("fatigue_strength"), (int, float))
-    ]
-    if alle_sicherheiten:
-        parameter[
-            (MAPPING_WELLE_MIN_SICHERHEIT.component, MAPPING_WELLE_MIN_SICHERHEIT.parameter)
-        ] = _parameter_eintrag(min(alle_sicherheiten), MAPPING_WELLE_MIN_SICHERHEIT)
-
-    # Parallelkey-Drehmoment
-    pk_eintraege = (
-        _sicherer_zugriff(ausgabe_ergebnisse, "shaft", "output", "parallelkey_safety", "output")
-        or []
-    )
-    if pk_eintraege:
-        pk_drehmoment = pk_eintraege[0].get("transmittable_torque")
-        if pk_drehmoment is not None:
-            parameter[
-                (MAPPING_WELLE_PK_DREHMOMENT.component, MAPPING_WELLE_PK_DREHMOMENT.parameter)
-            ] = _parameter_eintrag(pk_drehmoment, MAPPING_WELLE_PK_DREHMOMENT)
-
-    # Rotordynamik
-    rotordynamik = _sicherer_zugriff(ausgabe_ergebnisse, "rotordynamics", "output") or {}
-
-    rotor_masse = _sicherer_zugriff(rotordynamik, "rotor_properties", "mass")
-    if rotor_masse is not None:
-        parameter[(MAPPING_ROTOR_GESAMTMASSE.component, MAPPING_ROTOR_GESAMTMASSE.parameter)] = (
-            _parameter_eintrag(rotor_masse, MAPPING_ROTOR_GESAMTMASSE)
-        )
-
-    statische_loesung = rotordynamik.get("static_solution", {})
-    max_biegung = statische_loesung.get("maximum_bending")
-    if max_biegung is not None:
-        parameter[(MAPPING_ROTOR_MAX_BIEGUNG.component, MAPPING_ROTOR_MAX_BIEGUNG.parameter)] = (
-            _parameter_eintrag(abs(max_biegung), MAPPING_ROTOR_MAX_BIEGUNG)
-        )
-    mittlere_biegung = statische_loesung.get("average_bending_laminated_core")
-    if mittlere_biegung is not None:
-        parameter[(MAPPING_ROTOR_BIEGUNG_KERN.component, MAPPING_ROTOR_BIEGUNG_KERN.parameter)] = (
-            _parameter_eintrag(abs(mittlere_biegung), MAPPING_ROTOR_BIEGUNG_KERN)
-        )
-
-    eigenfrequenzen = _sicherer_zugriff(rotordynamik, "modal_solution", "eigenfrequencies") or {}
-    if isinstance(eigenfrequenzen, dict):
-        mode_1 = eigenfrequenzen.get("mode_1")
-        mode_2 = eigenfrequenzen.get("mode_2")
-        if mode_1 is not None:
-            parameter[
-                (MAPPING_ROTOR_EIGENFREQ_1.component, MAPPING_ROTOR_EIGENFREQ_1.parameter)
-            ] = _parameter_eintrag(mode_1, MAPPING_ROTOR_EIGENFREQ_1)
-        if mode_2 is not None:
-            parameter[
-                (MAPPING_ROTOR_EIGENFREQ_2.component, MAPPING_ROTOR_EIGENFREQ_2.parameter)
-            ] = _parameter_eintrag(mode_2, MAPPING_ROTOR_EIGENFREQ_2)
-
-    # Lager-Lebensdauer (nur bei Wälzlagern vorhanden)
-    lager_lebensdauer = _sicherer_zugriff(
-        ausgabe_ergebnisse, "roller_bearings", "output", "total", "rating_life_in_hours"
-    )
-    if lager_lebensdauer is not None:
-        parameter[(MAPPING_LAGER_LEBENSDAUER.component, MAPPING_LAGER_LEBENSDAUER.parameter)] = (
-            _parameter_eintrag(lager_lebensdauer, MAPPING_LAGER_LEBENSDAUER)
-        )
+        schluessel = (meta["component"], meta["parameter"])
+        parameter[schluessel] = {
+            "value": endwert,
+            "unit": meta["unit"],
+            "ptype": meta["ptype"],
+        }
 
     return rotor_id, {"params": parameter}
 
 
-# ---------------------------------------------------------------------------
-# Öffentliche API: alle JSON-Dateien laden
-# ---------------------------------------------------------------------------
+# ===================================================================
+# Öffentliche API
+# ===================================================================
 
 
 def fetch_all_features_from_json(
     verzeichnis: Path | str | None = None,
+    csv_pfad: Path | str | None = None,
 ) -> dict[str, dict]:
     """
-    Liest alle WVSC-JSON-Dateien und gibt features_by_rotor im Feature-Fetcher-Format zurück.
+    Liest alle WVSC-JSON-Dateien und gibt ``features_by_rotor`` zurück.
 
-    :param verzeichnis: Pfad zum Verzeichnis mit JSON-Dateien (optional, Standard: data/real_data/wvsc)
-    :type verzeichnis: Path | str | None
+    Die zu extrahierenden Parameter werden aus ``parameter_gefiltert.csv``
+    gelesen – keine hardcodierten Mappings.
+
+    :param verzeichnis: Pfad zum JSON-Verzeichnis (Standard: data/real_data/wvsc)
+    :param csv_pfad: Pfad zur Parameter-CSV (Standard: data/real_data/parameter_gefiltert.csv)
     :return: features_by_rotor[rotor_id]["params"][(component, param)] = {"value", "unit", "ptype"}
-    :rtype: dict[str, dict]
     """
     if verzeichnis is None:
         json_verzeichnis = WVSC_STANDARD_VERZEICHNIS
@@ -532,26 +503,31 @@ def fetch_all_features_from_json(
         logger.error("WVSC-Verzeichnis existiert nicht: %s", json_verzeichnis)
         return {}
 
+    # Parameter-Mapping aus CSV laden
+    param_mapping = _lade_parameter_csv(csv_pfad)
+    logger.info("%d Parameter aus CSV geladen", len(param_mapping))
+
     json_dateien = sorted(json_verzeichnis.glob("*.json"))
     if not json_dateien:
         logger.warning("Keine JSON-Dateien in %s gefunden", json_verzeichnis)
         return {}
 
     features_by_rotor: dict[str, dict] = {}
-    fehlerhafte_dateien = 0
+    fehlerhafte = 0
 
     for dateipfad in json_dateien:
-        ergebnis = _parse_einzelne_json(dateipfad)
+        ergebnis = _parse_einzelne_json(dateipfad, param_mapping)
         if ergebnis is None:
-            fehlerhafte_dateien += 1
+            fehlerhafte += 1
             continue
         rotor_id, rotor_daten = ergebnis
         features_by_rotor[rotor_id] = rotor_daten
 
     logger.info(
-        "%d Rotoren aus JSON geladen (%d Dateien fehlerhaft)",
+        "%d Rotoren geladen (%d fehlerhaft), %d Parameter pro Rotor (max)",
         len(features_by_rotor),
-        fehlerhafte_dateien,
+        fehlerhafte,
+        len(param_mapping),
     )
 
     return features_by_rotor

@@ -29,9 +29,9 @@ from sklearn.metrics import silhouette_score
 from rotor_owl.daten.json_parser import fetch_all_features_from_json
 from rotor_owl.daten.feature_fetcher import build_numeric_stats
 from rotor_owl.methoden.regelbasierte_aehnlichkeit import berechne_topk_aehnlichkeiten
-from rotor_owl.methoden.knn_aehnlichkeit import (
-    build_knn_embeddings,
-    berechne_topk_aehnlichkeiten_knn,
+from rotor_owl.methoden.vektorbasierte_aehnlichkeit import (
+    build_vektor_embeddings,
+    berechne_topk_aehnlichkeiten_vektorbasiert,
 )
 from rotor_owl.methoden.pca_aehnlichkeit import (
     build_pca_embeddings,
@@ -50,7 +50,7 @@ from rotor_owl.config.kategorien import KAT_GEOM_MECH, KAT_MTRL_PROC, KAT_REQ_EL
 
 METHODEN_NAMEN: list[str] = [
     "Regelbasiert",
-    "k-NN",
+    "Vektorbasiert",
     "PCA",
     "Autoencoder",
     "K-Means",
@@ -59,7 +59,7 @@ METHODEN_NAMEN: list[str] = [
 
 METHODEN_FARBEN: list[str] = [
     "#1f77b4",  # Regelbasiert – blau
-    "#ff7f0e",  # k-NN – orange
+    "#ff7f0e",  # Vektorbasiert – orange
     "#2ca02c",  # PCA – gruen
     "#d62728",  # Autoencoder – rot
     "#9467bd",  # K-Means – lila
@@ -185,17 +185,17 @@ def berechne_alle_matrizen(
     matrizen["Regelbasiert"] = matrix
     print(f" ✓ ({time.time() - startzeit:.1f}s)")
 
-    # --- 2. k-NN ---
+    # --- 2. Vektorbasiert ---
     startzeit = time.time()
-    print(f"2/6: k-NN ({n} Queries)...", end="", flush=True)
+    print(f"2/6: Vektorbasiert ({n} Queries)...", end="", flush=True)
 
-    knn_emb = build_knn_embeddings(features_by_rotor, numeric_stats)
+    vektor_emb = build_vektor_embeddings(features_by_rotor, numeric_stats)
     matrix = np.ones((n, n))
     for i, query_r in enumerate(rotor_ids):
-        ergebnisse = berechne_topk_aehnlichkeiten_knn(
+        ergebnisse = berechne_topk_aehnlichkeiten_vektorbasiert(
             query_r,
             rotor_ids,
-            knn_emb,
+            vektor_emb,
             gleichgewichtung,
             top_k=n,
         )
@@ -205,7 +205,7 @@ def berechne_alle_matrizen(
         if (i + 1) % FORTSCHRITTS_INTERVALL == 0:
             print(f" {i + 1}", end="", flush=True)
 
-    matrizen["k-NN"] = matrix
+    matrizen["Vektorbasiert"] = matrix
     print(f" ✓ ({time.time() - startzeit:.1f}s)")
 
     # --- 3. PCA ---

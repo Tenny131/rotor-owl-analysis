@@ -5,7 +5,10 @@ from dataclasses import dataclass
 import numpy as np
 
 from rotor_owl.config.kategorien import KATEGORIEN_3
-from rotor_owl.methoden.knn_aehnlichkeit import build_knn_embeddings, _KNNEmbeddings
+from rotor_owl.methoden.vektorbasierte_aehnlichkeit import (
+    build_vektor_embeddings,
+    _VektorEmbeddings,
+)
 from rotor_owl.utils.math_utils import cosine_similarity, berechne_gewichtete_gesamt_similarity
 
 
@@ -63,7 +66,7 @@ def build_pca_embeddings(
     Returns:
         _PCAEmbeddings: PCA-reduzierte Vektoren pro Kategorie
     """
-    knn_embeddings: _KNNEmbeddings = build_knn_embeddings(features_by_rotor, stats)
+    vektor_embeddings: _VektorEmbeddings = build_vektor_embeddings(features_by_rotor, stats)
 
     rotor_ids = sorted(features_by_rotor.keys())
     vectors_latent: dict[str, dict[str, np.ndarray]] = {}
@@ -72,7 +75,7 @@ def build_pca_embeddings(
         # Matrix bauen: (n_rotors x dim)
         vektoren_liste = []
         for rotor_id in rotor_ids:
-            vektoren_liste.append(knn_embeddings.vectors[kategorie][rotor_id])
+            vektoren_liste.append(vektor_embeddings.vectors[kategorie][rotor_id])
         eingabe_matrix = (
             np.vstack(vektoren_liste) if vektoren_liste else np.zeros((0, 0), dtype=float)
         )
