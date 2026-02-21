@@ -152,12 +152,12 @@ with st.sidebar:
     )
 
     # Latent Dimension für PCA / Autoencoder (32 = bessere Varianz-Erhaltung)
-    latent_dim = 32
+    latent_dim = 48
     if methode == "PCA-Embedding (ML)":
-        latent_dim = st.slider("PCA Latent Dimension", 2, 64, 32, 1)
+        latent_dim = st.slider("PCA Latent Dimension", 2, 96, 48, 2)
 
     if methode == "Autoencoder (ML)":
-        latent_dim = st.slider("Autoencoder Latent Dimension", 2, 64, 32, 1)
+        latent_dim = st.slider("Autoencoder Latent Dimension", 2, 96, 48, 2)
 
     # K-Means: Anzahl Cluster (8 = gute Balance für ~50 Rotoren)
     n_clusters = 8

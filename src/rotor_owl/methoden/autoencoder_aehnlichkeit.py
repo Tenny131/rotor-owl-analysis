@@ -50,7 +50,7 @@ def _extract_latent_embeddings(
 def build_autoencoder_embeddings(
     features_by_rotor: dict[str, dict[str, Any]],
     stats: Any,
-    latent_dim: int = 16,
+    latent_dim: int = 48,
     seed: int = 42,
     max_iter: int = 3000,
 ) -> dict[str, dict[str, np.ndarray]]:
@@ -111,12 +111,13 @@ def build_autoencoder_embeddings(
                 latent_embeddings[rotor_id][kategorie] = eingabe_matrix[idx]
             continue
 
-        # Hidden-Größe für gute Informationserhaltung
-        hidden_size = max(64, 4 * latent_dim)
+        # Graduelle Kompression: 5-Layer-Architektur
+        h1 = max(128, 3 * latent_dim)  # breite äußere Schicht
+        h2 = max(64, 2 * latent_dim)  # Zwischenschicht
 
-        # Architektur: input -> hidden -> latent -> hidden -> output
+        # Architektur: input -> h1 -> h2 -> latent -> h2 -> h1 -> output
         model = MLPRegressor(
-            hidden_layer_sizes=(hidden_size, latent_dim, hidden_size),
+            hidden_layer_sizes=(h1, h2, latent_dim, h2, h1),
             activation="relu",
             solver="adam",
             alpha=1e-4,
@@ -129,7 +130,7 @@ def build_autoencoder_embeddings(
 
         model.fit(eingabe_matrix, eingabe_matrix)
 
-        latent_matrix = _extract_latent_embeddings(model, eingabe_matrix, latent_layer_index=1)
+        latent_matrix = _extract_latent_embeddings(model, eingabe_matrix, latent_layer_index=2)
 
         for idx, rotor_id in enumerate(rotor_ids):
             latent_embeddings[rotor_id][kategorie] = latent_matrix[idx]
