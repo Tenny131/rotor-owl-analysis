@@ -60,14 +60,29 @@ cd rotor-owl-analysis
 # Docker Desktop öffnen und sicherstellen, dass Docker läuft
 # Services starten (Fuseki + Streamlit App)
 docker-compose up -d
-
-# Logs ansehen (optional)
-docker-compose logs -f
 ```
 
 **Services:**
 * **Fuseki**: http://localhost:3030
 * **Streamlit App**: http://localhost:8501
+
+**Container verwalten:**
+```powershell
+# Container stoppen (Daten bleiben erhalten)
+docker compose stop
+
+# Gestoppte Container wieder starten
+docker compose start
+
+# Container und Netzwerke vollständig entfernen
+docker compose down
+
+# Logs ansehen (optional)
+docker-compose logs -f
+```
+
+> Alternativ können die Container auch über die GUI verwaltet werden:
+> Sidebar → Containers → Container stoppen / starten / löschen.
 
 ### 3. Ontologie in Fuseki laden
 
